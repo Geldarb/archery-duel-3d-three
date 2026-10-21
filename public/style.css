@@ -3,12 +3,12 @@ html, body { margin: 0; height: 100dvh; overflow: hidden; overscroll-behavior: n
 canvas { display: block; position: fixed; inset: 0; width: 100vw; height: 100dvh; touch-action: none; }
 button { font: inherit; color: #fff; background: rgba(20,30,45,.75); border: 1px solid rgba(255,255,255,.35); border-radius: 10px; cursor: pointer; touch-action: manipulation; }
 #hud { position: fixed; top: max(8px, env(safe-area-inset-top)); left: 8px; right: 56px; display: flex; gap: 8px; align-items: flex-start; pointer-events: none; text-shadow: 0 1px 2px #0008; }
-.hp { flex: 1; font-size: 13px; font-weight: 700; }
+.hp { flex: 1; background: rgba(15,23,35,.4); border-radius: 8px; padding: 3px 6px; font-size: 13px; font-weight: 700; }
 #hp1 { text-align: right; }
 .bar { height: 10px; margin-top: 3px; background: rgba(0,0,0,.35); border-radius: 6px; overflow: hidden; border: 1px solid rgba(255,255,255,.5); }
 .bar i { display: block; height: 100%; width: 100%; transition: width .4s; }
 #hp0 i { background: #3b82f6; } #hp1 i { background: #ef4444; margin-left: auto; }
-#mid { text-align: center; font-size: 13px; font-weight: 700; min-width: 86px; }
+#mid { background: rgba(15,23,35,.55); border-radius: 8px; padding: 3px 8px; text-align: center; font-size: 13px; font-weight: 700; min-width: 86px; }
 #wind { margin-top: 2px; font-size: 12px; }
 #wind b { display: inline-block; font-size: 15px; margin-right: 4px; }
 #menuBtn { position: fixed; top: max(6px, env(safe-area-inset-top)); right: 8px; width: 40px; height: 36px; font-size: 18px; }

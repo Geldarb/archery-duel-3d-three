@@ -256,7 +256,7 @@ const endDrag = () => { if (!drag) return; drag = null; if (S.power >= 0.1) shoo
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
 const nudge = d => { if (S.phase !== 'aim') return; S.yaw = clamp(S.yaw + d * Math.PI / 180, -MAX_YAW * Math.PI / 180, MAX_YAW * Math.PI / 180); archers[S.turn].pose(S.pitch, S.yaw, S.power, true); updateHud(); };
-$('#yawL').onclick = () => nudge(1);   // "far" from camera = screen-left
+$('#yawL').onclick = () => nudge(1);   // away from the camera
 $('#yawR').onclick = () => nudge(-1);
 $('#menuBtn').onclick = () => $('#menu').classList.toggle('hidden');
 $('#close').onclick = () => $('#menu').classList.add('hidden');
@@ -284,7 +284,7 @@ function updateMarker() { // point at the opponent when off-screen while aiming
   if (S.phase !== 'aim') { m.style.display = 'none'; return; }
   const p = archers[1 - S.turn].root.position.clone().add(new V(0, 1.6, 0)).project(camera);
   if (Math.abs(p.x) < 0.95 && Math.abs(p.y) < 0.95 && p.z < 1) { m.style.display = 'none'; return; }
-  const x = clamp(p.x, -0.92, 0.92), y = clamp(p.y, -0.6, 0.6);
+  const x = clamp(p.x, -0.8, 0.8), y = clamp(p.y, -0.5, 0.5);
   m.style.display = 'block'; m.style.color = S.turn ? '#3b82f6' : '#ef4444';
   m.style.left = `${(x + 1) / 2 * innerWidth}px`; m.style.top = `${(1 - y) / 2 * innerHeight}px`;
   m.textContent = `${Math.round(2 * DIST)}m ▶`;
@@ -295,17 +295,18 @@ const camPos = new V(), camLook = new V();
 let camJump = true;
 function camTarget() {
   const f = archers[S.turn].f, portrait = camera.aspect < 0.9;
-  if (S.phase === 'aim' || S.phase === 'over') {
-    const a = archers[S.turn].root.position, k = portrait ? 1.25 : 1;
-    return [a.clone().add(new V(-3.5 * f * k, 3 * k, 11 * f * k)), a.clone().add(new V((portrait ? 5 : 9) * f, 2.2, 0))];
+  if (S.phase === 'aim' || !S.arrow) {
+    const a = archers[S.turn].root.position;
+    return portrait ? [a.clone().add(new V(0.6 * f, 2.6, 9 * f)), a.clone().add(new V(2.2 * f, 2.4, 0))]
+                    : [a.clone().add(new V(2 * f, 3.4, 12 * f)), a.clone().add(new V(6.5 * f, 2.2, 0))];
   }
   const p = S.phase === 'fly' ? S.pos : S.arrow.getWorldPosition(new V());
-  return [p.clone().add(new V(-3 * f, 1.8, 9 * f)), p.clone().add(new V(2 * f, 0, 0))];
+  return [p.clone().add(new V(-1.5 * f, 1.4, 7 * f)), p.clone().add(new V(1.5 * f, 0, 0))];
 }
 function resize() {
   renderer.setSize(innerWidth, innerHeight);
   camera.aspect = innerWidth / innerHeight;
-  camera.fov = camera.aspect < 0.9 ? 66 : 50;
+  camera.fov = camera.aspect < 0.9 ? 72 : 50;
   camera.updateProjectionMatrix();
 }
 addEventListener('resize', resize); resize();
@@ -323,7 +324,7 @@ function frame() {
     if (S.phase === 'fly') { S.arrow.position.copy(S.pos); S.arrow.quaternion.setFromUnitVectors(new V(1, 0, 0), S.vel.clone().normalize()); }
   } else if (S.phase === 'land' && (S.timer -= dt) <= 0) nextTurn();
   if (flashT > 0 && (flashT -= dt) <= 0 && S.phase === 'aim') $('#readout').textContent = '';
-  const [tp, tl] = camTarget(), k = camJump ? 1 : 1 - Math.exp(-dt * (S.phase === 'fly' ? 6 : 3));
+  const [tp, tl] = camTarget(), k = camJump ? 1 : 1 - Math.exp(-dt * (S.phase === 'fly' ? 12 : 3));
   camPos.lerp(tp, k); camLook.lerp(tl, k); camJump = false;
   camera.position.copy(camPos); camera.lookAt(camLook);
   updateWindArrow(); updateMarker();
