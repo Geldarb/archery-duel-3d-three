@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="build" content="ad3t-v1">
+<title>Archery Duel 3D</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">{ "imports": { "three": "/vendor/three.module.js" } }</script>
+</head>
+<body>
+<div id="hud">
+  <div class="hp" id="hp0"><span>Blue</span><div class="bar"><i></i></div></div>
+  <div id="mid"><div id="turn">Blue's turn</div><div id="wind"><b>➤</b><span>0.0</span></div></div>
+  <div class="hp" id="hp1"><span>Red</span><div class="bar"><i></i></div></div>
+</div>
+<button id="menuBtn" aria-label="Menu">☰</button>
+<div id="marker">▶</div>
+<div id="bottom">
+  <div id="hint">Drag back to draw the bow · release to shoot</div>
+  <div id="readout"></div>
+  <div id="yaw"><button id="yawL" aria-label="Aim left">◀</button><span id="yawV">0°</span><button id="yawR" aria-label="Aim right">▶</button></div>
+</div>
+<div id="menu" class="panel hidden">
+  <h2>Archery Duel 3D</h2>
+  <p>Two archers, one device. Take turns: drag back like pulling a bowstring (direction = angle, distance = power), release to shoot. ◀ ▶ nudge your aim sideways. Watch the wind. Body hit −25, headshot −50.</p>
+  <button id="restart">Restart match</button>
+  <button id="close">Close</button>
+</div>
+<div id="over" class="panel hidden">
+  <h2 id="winner">Blue wins!</h2>
+  <button id="rematch">Rematch</button>
+</div>
+<script type="module" src="game.js"></script>
+</body>
+</html>

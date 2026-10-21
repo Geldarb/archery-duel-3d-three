@@ -1,0 +1,19 @@
+{
+  "name": "archery-duel-3d-three",
+  "version": "1.0.0",
+  "description": "3D hot-seat archery duel (Three.js)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "express": "^5.3.0",
+    "three": "^0.186.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
