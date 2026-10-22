@@ -3,34 +3,62 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="build" content="ad3t-v1">
+<meta name="build" content="ad3t-v2">
 <title>Archery Duel 3D</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Ctext y=%2214%22 font-size=%2214%22%3E%F0%9F%8F%B9%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
+<script src="/socket.io/socket.io.min.js"></script>
 <script type="importmap">{ "imports": { "three": "/vendor/three.module.js" } }</script>
 </head>
 <body>
-<div id="hud">
+<div id="hud" class="hidden">
   <div class="hp" id="hp0"><span>Blue</span><div class="bar"><i></i></div></div>
   <div id="mid"><div id="turn">Blue's turn</div><div id="wind">Wind <b>➤</b><span>0.0</span></div></div>
   <div class="hp" id="hp1"><span>Red</span><div class="bar"><i></i></div></div>
 </div>
-<button id="menuBtn" aria-label="Menu">☰</button>
-<div id="marker">▶</div>
-<div id="bottom">
-  <div id="hint">Drag back to draw the bow · release to shoot</div>
+<button id="menuBtn" class="hidden" aria-label="Menu">☰</button>
+<div id="pip" class="hidden"><span></span></div>
+<div id="bottom" class="hidden">
+  <div id="hint"></div>
   <div id="readout"></div>
-  <div id="yaw"><button id="yawL" aria-label="Aim away from camera">▲</button><span id="yawV">0°</span><button id="yawR" aria-label="Aim toward camera">▼</button></div>
+  <div id="types">
+    <button data-t="normal" class="on">Normal</button><button data-t="heavy">Heavy</button><button data-t="split">Split</button>
+  </div>
+</div>
+
+<div id="home" class="panel">
+  <h1>Archery Duel 3D</h1>
+  <div class="chips" id="arenas"><button data-a="random" class="on">Random</button><button data-a="meadow">Meadow</button><button data-a="canyon">Canyon</button><button data-a="peaks">Peaks</button></div>
+  <button id="hotBtn">Hot-seat (one device)</button>
+  <button id="createBtn">Create room</button>
+  <div class="row"><input id="codeIn" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false"><button id="joinBtn">Join room</button></div>
+  <div id="homeMsg" class="msg"></div>
+  <div class="build">ad3t-v2</div>
+</div>
+<div id="lobby" class="panel hidden">
+  <h2>Room code</h2>
+  <div id="code">····</div>
+  <button id="copyBtn">Copy code</button>
+  <p class="msg">Waiting for your opponent to join…</p>
+  <button id="cancelBtn">Cancel</button>
 </div>
 <div id="menu" class="panel hidden">
   <h2>Archery Duel 3D</h2>
-  <p>Two archers, one device. Take turns: drag back like pulling a bowstring (direction = angle, distance = power), release to shoot. ▲ ▼ nudge your aim sideways (away from / toward the camera). Watch the wind. Body hit −25, headshot −50.</p>
+  <p>Drag <b>down</b> anywhere to draw the bow: further = longer shot. Drag <b>left/right</b> to aim sideways. Release to shoot. Watch the wind flags. Pick an arrow: <b>Normal</b> 25 / head 50, <b>Heavy</b> 35 / 70 (drops faster, ignores most wind), <b>Split</b> splits into 3 at the top of its arc, 15 / 30 each.</p>
+  <button id="muteBtn">Sound: on</button>
   <button id="restart">Restart match</button>
+  <button id="homeBtn">Main menu</button>
   <button id="close">Close</button>
 </div>
 <div id="over" class="panel hidden">
   <h2 id="winner">Blue wins!</h2>
+  <p id="overMsg" class="msg"></p>
   <button id="rematch">Rematch</button>
+  <button id="overHome">Main menu</button>
+</div>
+<div id="notice" class="panel hidden">
+  <h2 id="noticeText">Opponent left</h2>
+  <button id="noticeBtn">Back to menu</button>
 </div>
 <script type="module" src="game.js"></script>
 </body>

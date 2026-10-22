@@ -1,13 +1,14 @@
-// Archery Duel 3D — hot-seat v1. One file, plain Three.js.
+// Archery Duel 3D v2 — hot-seat + online rooms. Plain Three.js.
 import * as THREE from 'three';
+import { DIST, HP, ARROWS, ARENA_IDS, makeWorld, simulateShot, applyDamage, winnerOf, randomWind, launch, G } from './sim.js';
+import { buildArena } from './world.js';
+import * as sfx from './audio.js';
 
-const V = THREE.Vector3, $ = s => document.querySelector(s);
-const G = 9.8, MAXV = 31, DIST = 22, HP = 100, DMG = { head: 50, body: 25 };
-const DT = 1 / 240, LAND_HOLD = 1.3, MAX_YAW = 12;
+const V = THREE.Vector3, X = new V(1, 0, 0), $ = s => document.querySelector(s), DEG = Math.PI / 180;
 const NAMES = ['Blue', 'Red'], COLORS = [0x2f6fd6, 0xd63a2f];
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
-const smooth = (d, a, b) => { const t = clamp((d - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 const mat = c => new THREE.MeshStandardMaterial({ color: c, flatShading: true });
+const show = (sel, on) => $(sel).classList.toggle('hidden', !on);
 
 // ---------- renderer / scene ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -15,96 +16,32 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 document.body.prepend(renderer.domElement);
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0xdcefff, 70, 190);
-const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 500);
-
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 500), pipCam = new THREE.PerspectiveCamera(38, 1, 0.1, 300);
 scene.add(new THREE.HemisphereLight(0xe8f4ff, 0x4f6b35, 1.6));
 const sun = new THREE.DirectionalLight(0xfff4e0, 2.2);
-sun.position.set(-15, 40, 25);
-sun.castShadow = true;
-sun.shadow.mapSize.set(1024, 1024);
+sun.position.set(-15, 40, 25); sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024);
 Object.assign(sun.shadow.camera, { left: -40, right: 40, top: 30, bottom: -30, far: 120 });
 scene.add(sun);
+let world = null, arena = null;
+function setArena(id) { if (arena) arena.dispose(); world = makeWorld(id); arena = buildArena(scene, world); }
 
-{ // sky dome with vertex-colour gradient
-  const geo = new THREE.SphereGeometry(300, 24, 12), p = geo.attributes.position, cols = [];
-  const top = new THREE.Color(0x4a8fd8), bot = new THREE.Color(0xdcefff);
-  for (let i = 0; i < p.count; i++) { const c = bot.clone().lerp(top, Math.pow(Math.max(0, p.getY(i) / 300), 0.6)); cols.push(c.r, c.g, c.b); }
-  geo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
-  scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false })));
-}
-
-// ---------- terrain + obstacles ----------
-function groundH(x, z) {
-  let h = 0.5 * Math.sin(x * 0.17) * Math.cos(z * 0.21) + 0.3 * Math.sin(x * 0.41 + z * 0.33) + 0.3;
-  h *= smooth(Math.hypot(x + DIST, z), 3, 8) * smooth(Math.hypot(x - DIST, z), 3, 8);
-  return h + Math.max(0, Math.abs(z) - 16) * 0.4 + Math.max(0, Math.abs(x) - 36) * 0.5;
-}
-{
-  const geo = new THREE.PlaneGeometry(170, 110, 85, 55).rotateX(-Math.PI / 2).toNonIndexed();
-  const p = geo.attributes.position, cols = [], c = new THREE.Color();
-  for (let i = 0; i < p.count; i++) p.setY(i, groundH(p.getX(i), p.getZ(i)));
-  for (let i = 0; i < p.count; i += 3) {
-    const h = (p.getY(i) + p.getY(i + 1) + p.getY(i + 2)) / 3;
-    c.setHSL(0.26 + Math.random() * 0.04 - h * 0.006, 0.45, 0.36 + Math.random() * 0.05 + h * 0.01);
-    for (let k = 0; k < 3; k++) cols.push(c.r, c.g, c.b);
-  }
-  geo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
-  geo.computeVertexNormals();
-  const ground = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true }));
-  ground.receiveShadow = true;
-  scene.add(ground);
-}
-const obstacles = []; // functions p => boolean
-const rockMat = mat(0x8a8a86), trunkMat = mat(0x6b4426), leafMat = mat(0x2f7a3a);
-function rock(x, z, sx, sy, sz) {
-  const m = new THREE.Mesh(new THREE.DodecahedronGeometry(1, 0), rockMat);
-  m.scale.set(sx, sy, sz);
-  m.position.set(x, groundH(x, z) + sy * 0.45, z);
-  m.castShadow = m.receiveShadow = true;
-  scene.add(m);
-  const c = m.position.clone();
-  obstacles.push(p => ((p.x - c.x) / sx) ** 2 + ((p.y - c.y) / sy) ** 2 + ((p.z - c.z) / sz) ** 2 < 0.85);
-}
-function tree(x, z, s) {
-  const y = groundH(x, z), g = new THREE.Group();
-  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.16 * s, 0.24 * s, 1.3 * s, 6), trunkMat);
-  trunk.position.y = 0.65 * s;
-  const leaves = new THREE.Mesh(new THREE.ConeGeometry(1.2 * s, 2.8 * s, 7), leafMat);
-  leaves.position.y = 1.2 * s + 1.4 * s;
-  trunk.castShadow = leaves.castShadow = true;
-  g.add(trunk, leaves); g.position.set(x, y, z); g.rotation.y = x;
-  scene.add(g);
-  obstacles.push(p => {
-    const ly = p.y - y, r = Math.hypot(p.x - x, p.z - z);
-    if (ly < 0) return false;
-    if (ly < 1.2 * s) return r < 0.24 * s;
-    return ly < 4 * s && r < 1.2 * s * (1 - (ly - 1.2 * s) / (2.8 * s));
-  });
-}
-rock(0, 0, 1.6, 2.8, 3);
-rock(-9, -3, 0.8, 0.6, 0.8); rock(11, 4, 1, 0.7, 1);
-[[-7, 7, 1.2], [9, -8, 1.4], [-14, -9, 1.1], [15, 9, 1.3], [3, 13, 1.5], [-3, -15, 1.6], [-25, -12, 1.4], [26, 12, 1.2], [-28, 10, 1.5], [27, -11, 1.3]]
-  .forEach(([x, z, s]) => tree(x, z, s));
-
-// ---------- archers ----------
-function setLimb(mesh, a, b) { // stretch a unit cylinder between two points
+// ---------- archers & arrows ----------
+function setLimb(mesh, a, b) {
   const d = b.clone().sub(a);
-  mesh.position.copy(a).addScaledVector(d, 0.5);
-  mesh.scale.set(1, d.length(), 1);
+  mesh.position.copy(a).addScaledVector(d, 0.5); mesh.scale.set(1, d.length(), 1);
   mesh.quaternion.setFromUnitVectors(new V(0, 1, 0), d.normalize());
 }
-function makeArrow() { // tip at origin, points along +x
-  const g = new THREE.Group();
-  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.85, 5), mat(0xc9a36b));
+function makeArrow(type = 'normal') { // tip at origin, points along +x
+  const g = new THREE.Group(), heavy = type === 'heavy', r = heavy ? 0.027 : 0.018;
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.85, 5), mat(heavy ? 0x5b4632 : 0xc9a36b));
   shaft.rotation.z = Math.PI / 2; shaft.position.x = -0.5;
-  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.14, 6), mat(0x9aa3ad));
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(heavy ? 0.065 : 0.045, heavy ? 0.18 : 0.14, 6), mat(heavy ? 0x4b5563 : 0x9aa3ad));
   tip.rotation.z = -Math.PI / 2; tip.position.x = -0.07;
   g.add(shaft, tip);
   for (let k = 0; k < 3; k++) {
-    const f = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.07, 0.006), mat(0xf2f2f2));
+    const f = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.07, 0.006), mat(type === 'split' ? 0xf5c518 : heavy ? 0x222222 : 0xf2f2f2));
     f.position.set(-0.82, 0.045, 0);
-    const holder = new THREE.Group(); holder.rotation.x = k * Math.PI * 2 / 3; holder.add(f); g.add(holder);
+    const h = new THREE.Group(); h.rotation.x = k * Math.PI * 2 / 3; h.add(f); g.add(h);
   }
   g.traverse(o => { o.castShadow = true; });
   return g;
@@ -122,11 +59,10 @@ function makeArcher(i) {
   for (const z of [-0.07, 0.07]) add(new THREE.BoxGeometry(0.03, 0.04, 0.035), dark, 0.18, 1.78, z);
   const quiver = add(new THREE.CylinderGeometry(0.08, 0.07, 0.55, 6), wood, -0.26, 1.3, 0.05); quiver.rotation.z = -0.35;
   for (const z of [0, 0.05, 0.1]) add(new THREE.ConeGeometry(0.03, 0.12, 4), mat(0xf2f2f2), -0.36 - z * 0.3, 1.6 + z * 0.2, z);
-  // aim rig: pivots at the shoulders, +x = shot direction
-  const aim = new THREE.Group(); aim.position.set(0, 1.44, 0); root.add(aim);
-  const sFront = new V(0.03, 0, 0.2), hand = new V(0.62, 0, 0.0), sBack = new V(0, 0, -0.2);
+  const aim = new THREE.Group(); aim.position.set(0, 1.44, 0); root.add(aim); // shoulder pivot, +x = shot direction
+  const sFront = new V(0.03, 0, 0.2), hand = new V(0.62, 0, 0), sBack = new V(0, 0, -0.2);
   for (const z of [-0.2, 0.2]) add(new THREE.SphereGeometry(0.09, 8, 6), tunic, 0, 0, z, aim);
-  const armF = add(new THREE.CylinderGeometry(0.055, 0.05, 1, 6), tunic, 0, 0, 0, aim); setLimb(armF, sFront, hand);
+  setLimb(add(new THREE.CylinderGeometry(0.055, 0.05, 1, 6), tunic, 0, 0, 0, aim), sFront, hand);
   add(new THREE.SphereGeometry(0.06, 8, 6), skin, hand.x, hand.y, hand.z, aim);
   const ARC = Math.PI * 0.75, R = 0.62;
   const bow = add(new THREE.TorusGeometry(R, 0.025, 5, 20, ARC), wood, hand.x - R, 0, 0, aim); bow.rotation.z = -ARC / 2;
@@ -135,209 +71,335 @@ function makeArcher(i) {
   aim.add(new THREE.Line(stringGeo, new THREE.LineBasicMaterial({ color: 0xeeeeee })));
   const armB = add(new THREE.CylinderGeometry(0.05, 0.045, 1, 6), tunic, 0, 0, 0, aim);
   const handB = add(new THREE.SphereGeometry(0.055, 8, 6), skin, 0, 0, 0, aim);
-  const nocked = makeArrow(); aim.add(nocked);
+  let nocked = makeArrow(); aim.add(nocked);
   root.rotation.y = i ? Math.PI : 0;
   root.position.set(-f * DIST, 0, 0);
   scene.add(root);
   const a = {
-    root, aim, f, hp: HP,
-    pose(pitch, yaw, power, showArrow) {
-      aim.rotation.set(0, yaw, pitch);
-      const nx = tipX - 0.42 * power, nock = new V(nx, 0, 0);
+    root, f,
+    pose(pitch, yaw, draw, showArrow, type) {
+      aim.rotation.set(0, -yaw, pitch);
+      if (type && nocked.userData.type !== type) { aim.remove(nocked); nocked = makeArrow(type); nocked.userData.type = type; aim.add(nocked); }
+      const nx = tipX - 0.42 * draw, nock = new V(nx, 0, 0);
       stringGeo.attributes.position.setX(1, nx); stringGeo.attributes.position.needsUpdate = true;
       setLimb(armB, sBack, nock); handB.position.copy(nock);
       nocked.visible = showArrow; nocked.position.set(nx + 0.92, 0, 0);
-    },
-    hit(p) { // which part (if any) of this archer contains point p
-      const b = root.position, r2 = (p.x - b.x) ** 2 + (p.z - b.z) ** 2, y = p.y - b.y;
-      if ((y - 1.8) ** 2 + r2 < 0.26 ** 2) return 'head';
-      if (y > 0 && y < 1.62 && r2 < 0.3 ** 2) return 'body';
-      return null;
     },
   };
   a.pose(0.5, 0, 0, true);
   return a;
 }
 const archers = [makeArcher(0), makeArcher(1)];
-
-// ---------- game state ----------
-const S = { turn: 0, phase: 'aim', wind: new V(), pitch: 0.6, yaw: 0, power: 0, arrow: null, pos: new V(), vel: new V(), timer: 0, result: null, winner: -1, shots: 0 };
 const stuck = [];
-const launch = (i, pitch, yaw, power) => {
-  const f = archers[i].f, dir = new V(f * Math.cos(pitch) * Math.cos(yaw), Math.sin(pitch), -f * Math.cos(pitch) * Math.sin(yaw));
-  const pos = archers[i].root.position.clone().add(new V(0, 1.44, 0)).addScaledVector(dir, 0.9);
-  return { pos, vel: dir.multiplyScalar(MAXV * power) };
-};
-function step(p, v, wind) { v.x += wind.x * DT; v.z += wind.z * DT; v.y -= G * DT; p.addScaledVector(v, DT); }
-function collide(p, shooter) {
-  for (let i = 0; i < 2; i++) if (i !== shooter) { const part = archers[i].hit(p); if (part) return { kind: part, who: i }; }
-  if (p.y <= groundH(p.x, p.z)) return { kind: 'ground' };
-  if (obstacles.some(t => t(p))) return { kind: 'obstacle' };
-  if (Math.abs(p.x) > 85 || Math.abs(p.z) > 55 || p.y < -5) return { kind: 'out' };
-  return null;
-}
-function simulate(pitch, yaw, power, i = S.turn, wind = S.wind) { // pure: where would this shot land?
-  const { pos, vel } = launch(i, pitch, yaw, power);
-  for (let t = 0; t < 12; t += DT) { step(pos, vel, wind); const r = collide(pos, i); if (r) return { ...r, pos }; }
-  return { kind: 'out', pos };
-}
-function newWind() { S.wind.set((Math.random() * 2 - 1) * 3.5, 0, (Math.random() * 2 - 1) * 0.8); }
 
-function shoot() {
-  if (S.phase !== 'aim' || S.power < 0.1) return;
-  const { pos, vel } = launch(S.turn, S.pitch, S.yaw, S.power);
-  S.pos.copy(pos); S.vel.copy(vel);
-  S.arrow = makeArrow(); scene.add(S.arrow); stuck.push(S.arrow);
-  archers[S.turn].pose(S.pitch, S.yaw, 0, false);
-  S.phase = 'fly'; S.shots++; S.result = null;
-  preview.visible = false; $('#hint').style.display = 'none'; $('#readout').textContent = '';
-}
-function land(r) {
-  S.result = r; S.phase = 'land'; S.timer = LAND_HOLD;
-  const d = S.vel.clone().normalize();
-  S.arrow.position.copy(S.pos).addScaledVector(d, 0.15);
-  if (r.kind === 'out') { S.arrow.visible = false; }
-  if (r.who !== undefined) {
-    const t = archers[r.who];
-    t.root.attach(S.arrow);
-    t.hp = Math.max(0, t.hp - DMG[r.kind]);
-    flash(r.kind === 'head' ? 'HEADSHOT! −50' : 'Hit! −25');
-    updateHud();
-  } else flash(r.kind === 'out' ? 'Out of the arena' : 'Miss');
-}
-function nextTurn() {
-  if (archers.some(a => a.hp <= 0)) {
-    S.phase = 'over'; S.winner = archers[0].hp > 0 ? 0 : 1;
-    $('#winner').textContent = `${NAMES[S.winner]} wins!`; $('#over').classList.remove('hidden');
-    return;
-  }
-  S.turn = 1 - S.turn; S.phase = 'aim'; S.power = 0; S.pitch = 0.6; S.yaw = 0; S.arrow = null;
-  archers[S.turn].pose(S.pitch, 0, 0, true);
-  newWind(); updateHud();
-}
-function restart() {
+// ---------- state ----------
+const S = { mode: 'menu', phase: 'menu', me: 0, turn: 0, hp: [HP, HP], wind: { x: 0, z: 0 }, aim: { pitch: 0.5, yaw: 0, power: 0 }, draw: 0,
+  types: ['normal', 'normal'], arenaChoice: 'random', arenaId: 'meadow', play: null, queue: [], winner: -1, focus: null };
+const viewer = () => (S.mode === 'online' ? S.me : S.turn);
+const myTurn = () => S.phase === 'aim' && (S.mode === 'hot' || S.turn === S.me);
+
+function startMatch({ arenaId, mode, me = 0, turn = 0, hp = [HP, HP], wind }) {
+  if (arenaId !== S.arenaId || !world) setArena(arenaId);
   for (const a of stuck) a.removeFromParent();
   stuck.length = 0;
-  archers.forEach(a => { a.hp = HP; a.pose(0.5, 0, 0, true); });
-  Object.assign(S, { turn: 0, phase: 'aim', power: 0, pitch: 0.6, yaw: 0, arrow: null, winner: -1 });
-  newWind(); updateHud(); camJump = true;
-  $('#over').classList.add('hidden'); $('#menu').classList.add('hidden');
+  Object.assign(S, { mode, me, turn, hp: [...hp], wind, arenaId, phase: 'aim', winner: -1, play: null, queue: [], focus: null, draw: 0 });
+  archers.forEach((a, i) => a.pose(0.5, 0, 0, true, S.types[i]));
+  ['#home', '#lobby', '#over', '#menu', '#notice'].forEach(s => show(s, false));
+  ['#hud', '#menuBtn', '#bottom'].forEach(s => show(s, true));
+  show('#restart', mode === 'hot');
+  $('#homeBtn').textContent = mode === 'online' ? 'Leave room' : 'Main menu';
+  camJump = true; updateHud();
+}
+const pickArena = () => (S.arenaChoice === 'random' ? ARENA_IDS[Math.floor(Math.random() * ARENA_IDS.length)] : S.arenaChoice);
+const startHot = (arenaId = pickArena()) => startMatch({ arenaId, mode: 'hot', wind: randomWind() });
+function goHome() {
+  if (S.mode === 'online' && sock) sock.emit('leave');
+  Object.assign(S, { mode: 'menu', phase: 'menu', play: null, queue: [] });
+  ['#hud', '#menuBtn', '#bottom', '#pip', '#lobby', '#over', '#menu', '#notice'].forEach(s => show(s, false));
+  show('#home', true); $('#homeMsg').textContent = '';
+}
+function notice(msg) {
+  if (S.mode !== 'online') return;
+  S.mode = 'menu'; S.phase = 'menu';
+  ['#over', '#menu', '#lobby'].forEach(s => show(s, false));
+  $('#noticeText').textContent = msg; show('#notice', true);
 }
 
-// ---------- trajectory preview (first part of the arc only, no wind) ----------
+// ---------- shooting & playback ----------
+function fire() {
+  const aim = { ...S.aim }, type = S.types[S.turn];
+  preview.visible = false; $('#readout').textContent = '';
+  if (S.mode === 'online') { S.phase = 'wait'; sock.emit('shoot', { aim, type }); updateHud(); return; }
+  const sim = simulateShot(world, S.turn, aim, S.wind, type), hp = applyDamage(S.hp, sim);
+  playShot({ shooter: S.turn, aim, sim, hp, turn: 1 - S.turn, wind: randomWind(), winner: winnerOf(hp) });
+}
+function playShot(m) {
+  if (S.play) { S.queue.push(m); return; }
+  archers[m.shooter].pose(m.aim.pitch, m.aim.yaw, 0, false);
+  const arrows = m.sim.arrows.map(x => { const mesh = makeArrow(m.sim.type); mesh.visible = false; scene.add(mesh); stuck.push(mesh); return { ...x, m: mesh, landed: false }; });
+  S.play = { arrows, ft: 0, hold: 1.3, m };
+  S.phase = 'fly'; S.draw = 0; preview.visible = false;
+  sfx.twang(); sfx.whoosh(Math.max(...arrows.map(a => a.res.t)) * 0.8);
+  updateHud();
+}
+function land(a) {
+  a.landed = true;
+  const r = a.res, d = new V(...r.dir).normalize();
+  a.m.position.set(...r.pos).addScaledVector(d, 0.15); a.m.quaternion.setFromUnitVectors(X, d);
+  a.m.visible = r.kind !== 'out';
+  if (r.who !== undefined) {
+    a.m.updateMatrixWorld(); archers[r.who].root.attach(a.m);
+    S.hp[r.who] = Math.max(0, S.hp[r.who] - r.dmg);
+    const head = r.kind === 'head';
+    floatText(`−${r.dmg}`, new V(...r.pos).add(new V(0, 0.4, 0)), head ? '#ffd84a' : '#fff');
+    if (head) { sfx.ding(); flash('HEADSHOT!'); }
+    sfx.grunt(); shake = head ? 0.45 : 0.25;
+    updateHud();
+  } else if (r.kind !== 'out') sfx.thunk();
+}
+function updatePlay(dt) {
+  const P = S.play, slow = P.arrows.some(a => a.res.kind === 'head' && P.ft > a.res.t - 0.4 && P.ft < a.res.t + 0.25);
+  P.ft += dt * (slow ? 0.25 : 1);
+  for (const a of P.arrows) {
+    if (a.landed || P.ft < a.t0) continue;
+    const u = (P.ft - a.t0) * 60, i = Math.floor(u);
+    if (i >= a.pts.length - 1) { land(a); continue; }
+    const p0 = new V(...a.pts[i]), p1 = new V(...a.pts[i + 1]);
+    a.m.position.lerpVectors(p0, p1, u - i);
+    a.m.quaternion.setFromUnitVectors(X, p1.sub(p0).normalize());
+    a.m.visible = true;
+  }
+  if (P.arrows.every(a => a.landed) && (P.hold -= dt) <= 0) endShot();
+}
+function playLead() {
+  const P = S.play;
+  return P && (P.arrows.find(a => !a.landed && P.ft >= a.t0) || P.arrows.find(a => a.res.who !== undefined) || P.arrows.find(a => a.m.visible));
+}
+function endShot() {
+  const m = S.play.m, lead = playLead();
+  S.focus = lead ? lead.m.getWorldPosition(new V()) : null;
+  Object.assign(S, { hp: [...m.hp], turn: m.turn, wind: m.wind, play: null, aim: { pitch: 0.5, yaw: 0, power: 0 } });
+  if (m.winner >= 0) {
+    S.phase = 'over'; S.winner = m.winner;
+    $('#winner').textContent = S.mode === 'online' ? (m.winner === S.me ? 'You win!' : 'You lose') : `${NAMES[m.winner]} wins!`;
+    $('#overMsg').textContent = ''; $('#rematch').disabled = false; show('#over', true);
+  } else {
+    S.phase = 'aim';
+    archers[S.turn].pose(0.5, 0, 0, true, S.types[S.turn]);
+  }
+  updateHud();
+  if (S.queue.length) playShot(S.queue.shift());
+}
+
+// ---------- trajectory preview: first part of the arc only, no wind ----------
 const PREV_N = 14;
 const preview = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(PREV_N * 3), 3)),
-  new THREE.PointsMaterial({ color: 0xffffff, size: 5, sizeAttenuation: false, transparent: true, opacity: 0.55, depthWrite: false }));
+  new THREE.PointsMaterial({ color: 0xffffff, size: 6, sizeAttenuation: false, transparent: true, opacity: 0.6, depthWrite: false }));
 preview.visible = false; scene.add(preview);
 function updatePreview() {
-  const { pos, vel } = launch(S.turn, S.pitch, S.yaw, S.power), attr = preview.geometry.attributes.position, none = new V();
-  for (let k = 0; k < PREV_N; k++) { for (let s = 0; s < 8; s++) step(pos, vel, none); attr.setXYZ(k, pos.x, pos.y, pos.z); }
+  const { pos, vel } = launch(S.turn, S.aim), attr = preview.geometry.attributes.position, g = G * ARROWS[S.types[S.turn]].g, dt = 1 / 30;
+  for (let k = 0; k < PREV_N; k++) {
+    vel.y -= g * dt; pos.x += vel.x * dt; pos.y += vel.y * dt; pos.z += vel.z * dt;
+    attr.setXYZ(k, pos.x, pos.y, pos.z);
+  }
   attr.needsUpdate = true; preview.geometry.computeBoundingSphere(); preview.visible = true;
 }
 
-// ---------- input: drag back like a bowstring ----------
-let drag = null;
+// ---------- input: drag down to draw (range), left/right to aim ----------
+let drag = null, lastCreak = 0, lastAimSend = 0;
 const canvas = renderer.domElement;
 canvas.addEventListener('pointerdown', e => {
-  if (S.phase !== 'aim') return;
+  sfx.unlock();
+  if (!myTurn()) return;
   drag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId);
 });
 canvas.addEventListener('pointermove', e => {
-  if (!drag) return;
-  const px = drag.x - e.clientX, py = e.clientY - drag.y, len = Math.hypot(px, py);
-  S.power = clamp(len / (0.34 * Math.min(innerWidth, innerHeight)), 0, 1);
-  if (len > 6) S.pitch = clamp(Math.atan2(py, px), -0.25, 1.4);
-  archers[S.turn].pose(S.pitch, S.yaw, S.power, true);
-  $('#hint').style.display = 'none';
-  $('#readout').textContent = `${Math.round(S.pitch * 180 / Math.PI)}° · ${Math.round(S.power * 100)}%`;
-  if (S.power >= 0.1) updatePreview(); else preview.visible = false;
+  if (!drag || !myTurn()) return;
+  const px = drag.x - e.clientX, py = e.clientY - drag.y;
+  const t = clamp(py / (0.42 * innerHeight), 0, 1); // one pull sets range: steeper and stronger together
+  S.draw = t;
+  S.aim = { pitch: (8 + 42 * t) * DEG, yaw: clamp(px / (0.35 * innerWidth), -1, 1) * 12 * DEG, power: 0.3 + 0.7 * t };
+  archers[S.turn].pose(S.aim.pitch, S.aim.yaw, t, true, S.types[S.turn]);
+  if (Math.abs(t - lastCreak) > 0.08) { sfx.creak(t); lastCreak = t; }
+  $('#hint').textContent = '';
+  const yd = Math.round(S.aim.yaw / DEG);
+  $('#readout').textContent = t < 0.04 ? '' : `${Math.round(t * 100)}%${yd ? ` · ${yd > 0 ? '→' : '←'} ${Math.abs(yd)}°` : ''}`;
+  if (t >= 0.04) updatePreview(); else preview.visible = false;
+  if (S.mode === 'online' && performance.now() - lastAimSend > 100) { lastAimSend = performance.now(); sock.emit('aim', { pitch: S.aim.pitch, yaw: S.aim.yaw, draw: t }); }
 });
-const endDrag = () => { if (!drag) return; drag = null; if (S.power >= 0.1) shoot(); else { S.power = 0; preview.visible = false; $('#readout').textContent = ''; archers[S.turn].pose(S.pitch, S.yaw, 0, true); } };
+const endDrag = () => {
+  if (!drag) return;
+  drag = null; lastCreak = 0;
+  if (myTurn() && S.draw >= 0.04) fire();
+  else if (myTurn()) { S.draw = 0; preview.visible = false; $('#readout').textContent = ''; archers[S.turn].pose(S.aim.pitch, S.aim.yaw, 0, true); updateHud(); }
+};
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
-const nudge = d => { if (S.phase !== 'aim') return; S.yaw = clamp(S.yaw + d * Math.PI / 180, -MAX_YAW * Math.PI / 180, MAX_YAW * Math.PI / 180); archers[S.turn].pose(S.pitch, S.yaw, S.power, true); updateHud(); };
-$('#yawL').onclick = () => nudge(1);   // away from the camera
-$('#yawR').onclick = () => nudge(-1);
-$('#menuBtn').onclick = () => $('#menu').classList.toggle('hidden');
-$('#close').onclick = () => $('#menu').classList.add('hidden');
-$('#restart').onclick = restart;
-$('#rematch').onclick = restart;
+
+// ---------- UI wiring ----------
+document.querySelectorAll('#types button').forEach(b => b.onclick = () => {
+  if (!myTurn()) return;
+  S.types[S.turn] = b.dataset.t; archers[S.turn].pose(S.aim.pitch, S.aim.yaw, 0, true, b.dataset.t); updateHud();
+});
+document.querySelectorAll('#arenas button').forEach(b => b.onclick = () => {
+  S.arenaChoice = b.dataset.a;
+  document.querySelectorAll('#arenas button').forEach(x => x.classList.toggle('on', x === b));
+  if (b.dataset.a !== 'random') { setArena(b.dataset.a); S.arenaId = b.dataset.a; }
+});
+$('#hotBtn').onclick = () => { sfx.unlock(); startHot(); };
+$('#createBtn').onclick = () => { sfx.unlock(); net().emit('create', { arena: S.arenaChoice }); $('#homeMsg').textContent = 'Creating room…'; };
+$('#joinBtn').onclick = () => {
+  sfx.unlock();
+  const code = $('#codeIn').value.trim().toUpperCase();
+  if (code.length < 4) { $('#homeMsg').textContent = 'Enter the 4-letter code'; return; }
+  net().emit('join', { code }); $('#homeMsg').textContent = 'Joining…';
+};
+$('#codeIn').addEventListener('keydown', e => { if (e.key === 'Enter') $('#joinBtn').click(); });
+$('#copyBtn').onclick = () => {
+  const code = $('#code').textContent;
+  (navigator.clipboard ? navigator.clipboard.writeText(code) : Promise.reject()).then(() => { $('#copyBtn').textContent = 'Copied!'; }, () => { $('#copyBtn').textContent = `Code: ${code}`; });
+  setTimeout(() => { $('#copyBtn').textContent = 'Copy code'; }, 1500);
+};
+$('#cancelBtn').onclick = () => { if (sock) sock.emit('leave'); show('#lobby', false); show('#home', true); $('#homeMsg').textContent = ''; };
+$('#menuBtn').onclick = () => show('#menu', $('#menu').classList.contains('hidden'));
+$('#close').onclick = () => show('#menu', false);
+$('#restart').onclick = () => startHot(S.arenaId);
+$('#homeBtn').onclick = goHome;
+$('#overHome').onclick = goHome;
+$('#noticeBtn').onclick = goHome;
+$('#muteBtn').onclick = () => { sfx.setMuted(!sfx.isMuted()); updateHud(); };
+$('#rematch').onclick = () => {
+  if (S.mode === 'hot') return startHot(S.arenaId);
+  sock.emit('rematch'); $('#rematch').disabled = true; $('#overMsg').textContent = 'Waiting for opponent…';
+};
+
+// ---------- networking ----------
+let sock = null;
+function net() {
+  if (sock) return sock;
+  sock = window.io();
+  sock.on('created', ({ code }) => { $('#code').textContent = code; show('#home', false); show('#lobby', true); });
+  sock.on('joinError', msg => { $('#homeMsg').textContent = msg; });
+  sock.on('start', ({ arena: id, you, hp, turn, wind }) => startMatch({ arenaId: id, mode: 'online', me: you, hp, turn, wind }));
+  sock.on('aim', a => { if (S.mode === 'online' && S.phase === 'aim' && S.turn !== S.me) archers[S.turn].pose(a.pitch, a.yaw, a.draw, true, S.types[S.turn]); });
+  sock.on('shot', m => { if (S.mode === 'online') playShot(m); });
+  sock.on('rematchAsk', () => { $('#overMsg').textContent = 'Opponent wants a rematch!'; });
+  sock.on('opponentLeft', () => notice('Opponent left'));
+  sock.on('disconnect', () => notice('Connection lost'));
+  return sock;
+}
 
 // ---------- HUD ----------
-let flashT = 0;
-function flash(msg) { $('#readout').textContent = msg; flashT = 1.3; }
+let flashT = 0, shake = 0;
+const floats = [];
+function flash(msg) { $('#readout').textContent = msg; flashT = 1.4; }
+function floatText(txt, pos, color) {
+  const el = document.createElement('div');
+  el.className = 'float'; el.textContent = txt; el.style.color = color; document.body.appendChild(el);
+  floats.push({ el, p: pos, t: 0 });
+}
 function updateHud() {
-  archers.forEach((a, i) => { $(`#hp${i} i`).style.width = `${a.hp}%`; $(`#hp${i} span`).textContent = `${NAMES[i]} ${a.hp}`; });
-  $('#turn').textContent = `${NAMES[S.turn]}'s turn`;
+  const online = S.mode === 'online';
+  archers.forEach((a, i) => {
+    $(`#hp${i} i`).style.width = `${S.hp[i]}%`;
+    $(`#hp${i} span`).textContent = `${NAMES[i]}${online && i === S.me ? ' (you)' : ''} ${S.hp[i]}`;
+  });
+  $('#turn').textContent = online ? (S.turn === S.me ? 'Your turn' : `${NAMES[S.turn]}'s turn`) : `${NAMES[S.turn]}'s turn`;
   $('#turn').style.color = S.turn ? '#fecaca' : '#bfdbfe';
   $('#wind span').textContent = Math.hypot(S.wind.x, S.wind.z).toFixed(1);
-  $('#yawV').textContent = `${Math.round(S.yaw * 180 / Math.PI)}°`;
-  $('#hint').style.display = S.phase === 'aim' && S.power === 0 ? '' : 'none';
+  const mine = myTurn();
+  show('#types', mine);
+  document.querySelectorAll('#types button').forEach(b => b.classList.toggle('on', b.dataset.t === S.types[S.turn]));
+  $('#hint').textContent = S.phase === 'aim' && S.draw === 0 ? (mine ? 'Drag down to draw · left/right to aim' : 'Opponent is aiming…') : '';
+  $('#muteBtn').textContent = `Sound: ${sfx.isMuted() ? 'off' : 'on'}`;
 }
-function updateWindArrow() { // rotate the wind glyph to match its on-screen direction
+function updateWindArrow() {
   const c = archers[S.turn].root.position.clone().add(new V(0, 2, 0));
-  const a = c.clone().project(camera), b = c.clone().addScaledVector(S.wind.clone().normalize(), 4).project(camera);
+  const a = c.clone().project(camera), b = c.clone().add(new V(S.wind.x, 0, S.wind.z).normalize().multiplyScalar(4)).project(camera);
   $('#wind b').style.transform = `rotate(${Math.atan2(-(b.y - a.y) / camera.aspect, b.x - a.x)}rad)`;
-}
-function updateMarker() { // point at the opponent when off-screen while aiming
-  const m = $('#marker');
-  if (S.phase !== 'aim') { m.style.display = 'none'; return; }
-  const p = archers[1 - S.turn].root.position.clone().add(new V(0, 1.6, 0)).project(camera);
-  if (Math.abs(p.x) < 0.95 && Math.abs(p.y) < 0.95 && p.z < 1) { m.style.display = 'none'; return; }
-  const x = clamp(p.x, -0.8, 0.8), y = clamp(p.y, -0.5, 0.5);
-  m.style.display = 'block'; m.style.color = S.turn ? '#3b82f6' : '#ef4444';
-  m.style.left = `${(x + 1) / 2 * innerWidth}px`; m.style.top = `${(1 - y) / 2 * innerHeight}px`;
-  m.textContent = `${Math.round(2 * DIST)}m ▶`;
 }
 
 // ---------- camera ----------
 const camPos = new V(), camLook = new V();
 let camJump = true;
-function camTarget() {
-  const f = archers[S.turn].f, portrait = camera.aspect < 0.9;
-  if (S.phase === 'aim' || !S.arrow) {
-    const a = archers[S.turn].root.position;
-    return portrait ? [a.clone().add(new V(0.6 * f, 2.6, 9 * f)), a.clone().add(new V(2.2 * f, 2.4, 0))]
-                    : [a.clone().add(new V(2 * f, 3.4, 12 * f)), a.clone().add(new V(6.5 * f, 2.2, 0))];
+function camTarget(t) {
+  if (S.phase === 'menu') { const a = t * 0.08; return [new V(Math.cos(a) * 36, 12, Math.sin(a) * 36), new V(0, 2, 0)]; }
+  const v = viewer(), fv = archers[v].f;
+  const lead = S.play ? playLead() : null, focus = lead ? lead.m.getWorldPosition(new V()) : S.phase === 'over' ? S.focus : null;
+  if (focus) {
+    const fs = S.play ? archers[S.play.m.shooter].f : fv;
+    return [focus.clone().add(new V(-1.5 * fs, 1.4, 7 * fv)), focus.clone().add(new V(1.5 * fs, 0, 0))];
   }
-  const p = S.phase === 'fly' ? S.pos : S.arrow.getWorldPosition(new V());
-  return [p.clone().add(new V(-1.5 * f, 1.4, 7 * f)), p.clone().add(new V(1.5 * f, 0, 0))];
+  const a = archers[v].root.position, portrait = camera.aspect < 0.9; // over-the-shoulder aim view
+  return portrait ? [a.clone().add(new V(-5.6 * fv, 2.8, 2.1 * fv)), a.clone().add(new V(10 * fv, 2.4, -0.4 * fv))]
+                  : [a.clone().add(new V(-5 * fv, 2.6, 2.4 * fv)), a.clone().add(new V(14 * fv, 1.8, -0.6 * fv))];
+}
+function pipRect() {
+  const portrait = innerWidth < innerHeight, w = Math.round(innerWidth * (portrait ? 0.34 : 0.18)), h = Math.round(w * (portrait ? 1.2 : 0.85));
+  return { x: innerWidth - w - 8, y: 58, w, h };
 }
 function resize() {
   renderer.setSize(innerWidth, innerHeight);
-  camera.aspect = innerWidth / innerHeight;
-  camera.fov = camera.aspect < 0.9 ? 72 : 50;
-  camera.updateProjectionMatrix();
+  camera.aspect = innerWidth / innerHeight; camera.fov = camera.aspect < 0.9 ? 70 : 50; camera.updateProjectionMatrix();
+  const r = pipRect();
+  Object.assign($('#pip').style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w - 4}px`, height: `${r.h - 4}px` });
+  pipCam.aspect = r.w / r.h; pipCam.updateProjectionMatrix();
 }
 addEventListener('resize', resize); resize();
 
 // ---------- loop ----------
 const clock = new THREE.Clock();
+let time = 0;
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
-  if (S.phase === 'fly') {
-    for (let t = 0; t < dt; t += DT) {
-      step(S.pos, S.vel, S.wind);
-      const r = collide(S.pos, S.turn);
-      if (r) { land(r); break; }
-    }
-    if (S.phase === 'fly') { S.arrow.position.copy(S.pos); S.arrow.quaternion.setFromUnitVectors(new V(1, 0, 0), S.vel.clone().normalize()); }
-  } else if (S.phase === 'land' && (S.timer -= dt) <= 0) nextTurn();
-  if (flashT > 0 && (flashT -= dt) <= 0 && S.phase === 'aim') $('#readout').textContent = '';
-  const [tp, tl] = camTarget(), k = camJump ? 1 : 1 - Math.exp(-dt * (S.phase === 'fly' ? 12 : 3));
+  time += dt;
+  if (S.play) updatePlay(dt);
+  if (flashT > 0 && (flashT -= dt) <= 0 && !drag) $('#readout').textContent = '';
+  arena.update(dt, time, S.phase === 'menu' ? { x: 1.5, z: 0.5 } : S.wind);
+  const [tp, tl] = camTarget(time), k = camJump ? 1 : 1 - Math.exp(-dt * (S.phase === 'fly' ? 10 : 3));
   camPos.lerp(tp, k); camLook.lerp(tl, k); camJump = false;
   camera.position.copy(camPos); camera.lookAt(camLook);
-  updateWindArrow(); updateMarker();
+  if (shake > 0.002) { camera.position.add(new V(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(shake)); shake *= Math.exp(-dt * 7); }
+  for (let i = floats.length - 1; i >= 0; i--) {
+    const f = floats[i]; f.t += dt; f.p.y += dt * 0.7;
+    const s = f.p.clone().project(camera);
+    Object.assign(f.el.style, { left: `${(s.x + 1) / 2 * innerWidth}px`, top: `${(1 - s.y) / 2 * innerHeight}px`, opacity: String(Math.max(0, 1 - f.t / 1.4)) });
+    if (f.t > 1.4) { f.el.remove(); floats.splice(i, 1); }
+  }
+  if (S.phase !== 'menu') updateWindArrow();
+  renderer.setViewport(0, 0, innerWidth, innerHeight);
   renderer.render(scene, camera);
+  const pip = S.phase === 'aim' || S.phase === 'wait';
+  show('#pip', pip);
+  if (pip) { // picture-in-picture of the opponent
+    const o = archers[1 - viewer()], r = pipRect(), fv = archers[viewer()].f;
+    pipCam.position.copy(o.root.position).add(new V(3.6 * o.f, 2.0, 2.4 * fv));
+    pipCam.lookAt(o.root.position.clone().add(new V(0, 1.1, 0)));
+    $('#pip span').textContent = NAMES[1 - viewer()];
+    renderer.setScissorTest(true);
+    renderer.setViewport(r.x, innerHeight - r.y - r.h, r.w, r.h); renderer.setScissor(r.x, innerHeight - r.y - r.h, r.w, r.h);
+    renderer.render(scene, pipCam);
+    renderer.setScissorTest(false);
+  }
   requestAnimationFrame(frame);
 }
-newWind(); updateHud(); frame();
+setArena('meadow');
+updateHud(); frame();
 
-// test hook (used by the scripted checks)
+// test hook (scripted checks)
 window.__game = {
-  S, archers, simulate,
-  setWind: (x, z) => { S.wind.set(x, 0, z); updateHud(); },
-  aim: (pitchDeg, yawDeg, power) => { S.pitch = pitchDeg * Math.PI / 180; S.yaw = yawDeg * Math.PI / 180; S.power = power; archers[S.turn].pose(S.pitch, S.yaw, S.power, true); updatePreview(); },
-  shoot,
+  S, archers,
+  get world() { return world; },
+  startHot,
+  simulate: (aim, type = 'normal') => simulateShot(world, S.turn, aim, S.wind, type),
+  setWind: (x, z) => { S.wind = { x, z }; updateHud(); },
+  findHit(type = 'normal') { // search for a body hit with the current wind
+    for (const pd of [35, 25, 45]) for (let yaw = 0; yaw <= 0.2; yaw += 0.01) for (const ys of [1, -1]) for (let pw = 0.4; pw <= 1; pw += 0.004) {
+      const aim = { pitch: pd * DEG, yaw: yaw * ys, power: pw }, r = simulateShot(world, S.turn, aim, S.wind, type).arrows[0].res;
+      if (r.kind === 'body') return aim;
+    }
+    return null;
+  },
+  shootAim(aim, type = 'normal') { if (!myTurn()) return false; S.types[S.turn] = type; S.aim = aim; S.draw = 1; fire(); return true; },
 };
 window.__ready = true;

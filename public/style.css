@@ -2,8 +2,9 @@ html, body { margin: 0; height: 100dvh; overflow: hidden; overscroll-behavior: n
   font-family: system-ui, sans-serif; color: #fff; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
 canvas { display: block; position: fixed; inset: 0; width: 100vw; height: 100dvh; touch-action: none; }
 button { font: inherit; color: #fff; background: rgba(20,30,45,.75); border: 1px solid rgba(255,255,255,.35); border-radius: 10px; cursor: pointer; touch-action: manipulation; }
+button.on { background: #2563eb; border-color: #93c5fd; }
 #hud { position: fixed; top: max(8px, env(safe-area-inset-top)); left: 8px; right: 56px; display: flex; gap: 8px; align-items: flex-start; pointer-events: none; text-shadow: 0 1px 2px #0008; }
-.hp { flex: 1; background: rgba(15,23,35,.4); border-radius: 8px; padding: 3px 6px; font-size: 13px; font-weight: 700; }
+.hp { flex: 1; font-size: 13px; font-weight: 700; background: rgba(15,23,35,.4); border-radius: 8px; padding: 3px 6px; }
 #hp1 { text-align: right; }
 .bar { height: 10px; margin-top: 3px; background: rgba(0,0,0,.35); border-radius: 6px; overflow: hidden; border: 1px solid rgba(255,255,255,.5); }
 .bar i { display: block; height: 100%; width: 100%; transition: width .4s; }
@@ -12,14 +13,23 @@ button { font: inherit; color: #fff; background: rgba(20,30,45,.75); border: 1px
 #wind { margin-top: 2px; font-size: 12px; }
 #wind b { display: inline-block; font-size: 15px; margin-right: 4px; }
 #menuBtn { position: fixed; top: max(6px, env(safe-area-inset-top)); right: 8px; width: 40px; height: 36px; font-size: 18px; }
+#pip { position: fixed; border: 2px solid rgba(255,255,255,.8); border-radius: 8px; pointer-events: none; box-shadow: 0 2px 8px #0006; }
+#pip span { position: absolute; left: 4px; bottom: 2px; font-size: 11px; font-weight: 700; text-shadow: 0 1px 2px #000; }
 #bottom { position: fixed; left: 0; right: 0; bottom: max(10px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; text-shadow: 0 1px 2px #000a; }
-#hint { font-size: 13px; background: rgba(0,0,0,.3); padding: 4px 10px; border-radius: 8px; }
-#readout { font-size: 14px; font-weight: 700; min-height: 18px; }
-#yaw { pointer-events: auto; display: flex; align-items: center; gap: 8px; font-size: 13px; }
-#yaw button { width: 44px; height: 36px; }
-#yaw span { min-width: 30px; text-align: center; }
-#marker { position: fixed; font-size: 18px; color: #ef4444; text-shadow: 0 0 3px #000; pointer-events: none; display: none; transform: translate(-50%,-50%); }
+#hint { font-size: 13px; background: rgba(0,0,0,.35); padding: 4px 10px; border-radius: 8px; }
+#hint:empty { display: none; }
+#readout { font-size: 15px; font-weight: 700; min-height: 18px; }
+#types { pointer-events: auto; display: flex; gap: 4px; }
+#types button { font-size: 13px; padding: 7px 10px; }
+.float { position: fixed; font-weight: 800; font-size: 22px; pointer-events: none; transform: translate(-50%,-50%); text-shadow: 0 2px 3px #000; }
 .panel { position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%); width: min(86vw, 340px); background: rgba(15,23,35,.92); border-radius: 14px; padding: 18px; text-align: center; box-shadow: 0 8px 30px #0008; }
-.panel h2 { margin: 0 0 10px; } .panel p { font-size: 14px; line-height: 1.4; text-align: left; }
-.panel button { display: block; width: 100%; padding: 11px; margin-top: 8px; font-size: 16px; }
-.hidden { display: none; }
+.panel h1 { margin: 0 0 12px; font-size: 26px; } .panel h2 { margin: 0 0 10px; }
+.panel p { font-size: 14px; line-height: 1.4; text-align: left; }
+.panel > button, .row button { display: block; width: 100%; padding: 11px; margin-top: 8px; font-size: 16px; }
+.row { display: flex; gap: 8px; } .row input { flex: 1; min-width: 0; margin-top: 8px; font-size: 18px; text-align: center; text-transform: uppercase; letter-spacing: 3px; border-radius: 10px; border: 1px solid #fff6; background: #0006; color: #fff; }
+.row button { flex: 1.2; }
+.chips { display: flex; gap: 4px; justify-content: center; flex-wrap: wrap; } .chips button { font-size: 13px; padding: 6px 9px; }
+.msg { min-height: 18px; font-size: 14px; color: #fde68a; text-align: center !important; }
+#code { font-size: 44px; font-weight: 800; letter-spacing: 8px; margin: 4px 0 8px; }
+.build { font-size: 10px; opacity: .4; margin-top: 8px; }
+.hidden { display: none !important; }
