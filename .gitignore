@@ -11,3 +11,4 @@ v43-*
 v44-*
 bugshots/
 v45-*
+!public/icons/*.png
