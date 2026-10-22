@@ -138,4 +138,7 @@ export function applyShot(hp, merlons, shot) {
   return s;
 }
 export const winnerOf = hp => (hp[0] <= 0 ? 1 : hp[1] <= 0 ? 0 : -1);
+// Series: Single (1), Best of 3 or Best of 5. Returns the series winner or -1.
+export const SERIES = [1, 3, 5];
+export const seriesWinnerOf = (score, best) => score.findIndex(w => w >= Math.ceil(best / 2));
 export const randomWind = () => ({ x: r2((Math.random() * 2 - 1) * 3.5), z: 0 }); // head/tail wind only, so wind never pushes a shot sideways

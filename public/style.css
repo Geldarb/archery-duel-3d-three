@@ -94,3 +94,17 @@ button:disabled { opacity: .6; }
 }
 .num span { min-width: 0; overflow: hidden; text-overflow: ellipsis; opacity: .92; }
 @media (max-width: 480px) { .num { font-size: 12px; } }
+/* series + share */
+#seriesBtns { margin-bottom: 6px; } #seriesBtns button.on { background: #6fdc5a; }
+#score { display: flex; align-items: center; gap: 5px; max-width: 46vw; font-size: 11px; font-weight: 700; color: var(--ink); background: #fff; border: 2px solid var(--line); border-radius: 10px; padding: 0 7px; white-space: nowrap; }
+#score span { max-width: 9ch; overflow: hidden; text-overflow: ellipsis; }
+#score b { font-size: 13px; }
+#roundCard { position: fixed; left: 50%; top: 38%; transform: translate(-50%, -50%); z-index: 6; pointer-events: none; text-align: center; background: #fff; color: var(--ink);
+  border: 5px solid var(--line); border-radius: 22px; padding: 10px 22px; box-shadow: 0 5px 0 var(--line); animation: pop .35s ease-out; }
+#roundCard b { display: block; font-size: 26px; white-space: nowrap; } #roundCard span { font-size: 20px; font-weight: 700; }
+@keyframes pop { from { transform: translate(-50%, -50%) scale(.6); opacity: 0; } }
+.row2 { display: flex; gap: 8px; } .row2 button { flex: 1; padding: 10px 6px; margin-top: 8px; font-size: 16px; }
+#shareBtn { background: linear-gradient(#ffb547, #f2860d); }
+#lobbyMsg { word-break: break-all; }
+#overScore { font-size: 15px; font-weight: 700; margin-top: 4px; }
+#overScore:empty { display: none; }

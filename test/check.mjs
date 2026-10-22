@@ -8,17 +8,18 @@ const b = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', hea
 const errors = [];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); };
-async function open(w, h, touch, ctx = b) {
+async function open(w, h, touch, ctx = b, url = base) {
   const pg = await ctx.newPage();
   await pg.setViewport({ width: w, height: h, isMobile: touch, hasTouch: touch, deviceScaleFactor: 1 });
   pg.on('console', m => { if (m.type() === 'error') errors.push(`${w}: ${m.text()}`); });
   pg.on('pageerror', e => errors.push(`${w}: ${e.message}`));
-  await pg.goto(base, { waitUntil: 'networkidle0' });
+  await pg.goto(url, { waitUntil: 'networkidle0' });
   await pg.waitForFunction('window.__ready', { timeout: 20000 });
   await sleep(800);
   return pg;
 }
-const st = pg => pg.evaluate(() => ({ turn: __game.S.turn, phase: __game.S.phase, hp: [...__game.S.hp], mode: __game.S.mode, arena: __game.S.arenaId, winner: __game.S.winner }));
+const st = pg => pg.evaluate(() => ({ turn: __game.S.turn, phase: __game.S.phase, hp: [...__game.S.hp], mode: __game.S.mode, arena: __game.S.arenaId, winner: __game.S.winner, score: [...__game.S.score], best: __game.S.best, merl: __game.S.merlons.join('') }));
+const done = pg => pg.waitForFunction(() => !__game.S.play && ['aim', 'over', 'round', 'menu'].includes(__game.S.phase), { timeout: 20000 });
 const settle = pg => pg.waitForFunction(() => ['aim', 'over', 'menu'].includes(__game.S.phase) && !__game.S.play, { timeout: 20000 });
 
 if (which !== 'online') {
@@ -86,7 +87,8 @@ if (which !== 'online') {
   }
   // hot-seat full cycle with each arrow type
   const pg = await open(390, 844, true);
-  await pg.click('#arenas button[data-a="field"]'); await pg.click('#hotBtn'); await sleep(800);
+  await pg.click('#arenas button[data-a="field"]'); await pg.click('#seriesBtns button[data-s="3"]'); await pg.click('#hotBtn'); await sleep(800);
+  { const s0 = await st(pg); assert(s0.best === 3 && s0.score.join() === '0,0', 'hot-seat Best of 3 started'); }
   // drag mapping (screen space), checked from both players' views: up = higher angle only, right = more power only; taps don't fire
   {
     const read = () => pg.evaluate(() => ({ pitch: Math.round(__game.S.aim.pitch * 5729.6) / 100, power: Math.round(__game.S.aim.power * 1000) / 1000, yaw: __game.S.aim.yaw }));
@@ -139,28 +141,42 @@ if (which !== 'online') {
     assert(m.hp[hit.merlon] === want && m.vis[hit.merlon].hp === want, 'merlon state');
     if (want === 0) { assert(m.vis[hit.merlon].fallen, 'merlon fell'); await pg.screenshot({ path: `${out}/hot-merlon-off.png` }); }
   }
-  const types = ['normal', 'heavy', 'split', 'normal', 'heavy', 'normal', 'heavy', 'normal'];
-  let shotN = 0;
-  for (const type of types) {
+  // play out a hot-seat Best of 3 with typed hit shots
+  const types = ['normal', 'heavy', 'split', 'normal', 'heavy'];
+  let shotN = 0, rounds = 0;
+  while (shotN < 60) {
     const before = await st(pg);
     if (before.phase === 'over') break;
+    const type = types[shotN % types.length];
     await pg.evaluate(() => __game.setWind(0, 0));
     const aim = await pg.evaluate(t => __game.findHit(t), type);
     assert(aim, 'found a hitting aim for ' + type);
     await pg.evaluate((a, t) => __game.shootAim(a, t), aim, type);
     if (shotN++ === 0) { await pg.waitForFunction(() => __game.S.play && __game.S.play.arrows.every(a => a.landed), { timeout: 10000 }); await sleep(150); await pg.screenshot({ path: `${out}/hot-hit.png` }); }
-    await settle(pg);
+    await done(pg);
     const after = await st(pg);
-    console.log('hot', type, before.hp, '->', after.hp, 'turn', before.turn, '->', after.turn, after.phase);
+    console.log('hot', type, before.hp, '->', after.hp, 'turn', before.turn, '->', after.turn, after.phase, 'score', after.score.join('-'));
     assert(after.hp[1 - before.turn] < before.hp[1 - before.turn], 'HP dropped');
-    assert(after.phase === 'over' || after.turn !== before.turn, 'turn switched');
+    if (after.phase === 'round') {
+      rounds++;
+      assert(after.score[0] + after.score[1] === rounds, 'round scored');
+      const card = await pg.$eval('#roundCard', e => (e.classList.contains('hidden') ? '' : e.textContent));
+      assert(/Round to/.test(card), 'round card shown');
+      if (rounds === 1) await pg.screenshot({ path: `${out}/hot-round-card.png` });
+      await settle(pg);
+      const nx = await st(pg);
+      console.log('hot next round', nx.score.join('-'), 'hp', nx.hp, 'turn', nx.turn, 'arena', nx.arena);
+      assert(nx.phase === 'aim' && nx.hp.join() === '100,100' && nx.turn === 1 - before.turn && nx.arena === 'field' && !nx.merl.includes('0') && !nx.merl.includes('1'), 'next round reset, loser first, same arena');
+      if (rounds === 1) await pg.screenshot({ path: `${out}/hot-score-pill.png` });
+    } else assert(after.phase === 'over' || after.turn !== before.turn, 'turn switched');
   }
   const fin = await st(pg);
-  assert(fin.phase === 'over', 'hot-seat game over'); await sleep(400);
+  assert(fin.phase === 'over' && Math.max(...fin.score) === 2, 'hot-seat series over at 2 wins'); await sleep(400);
+  console.log('hot series end:', await pg.$eval('#winner', e => e.textContent), '|', await pg.$eval('#overScore', e => e.textContent), '|', await pg.$eval('#rematch', e => e.textContent));
   await pg.screenshot({ path: `${out}/hot-win.png` });
   await pg.click('#rematch'); await sleep(400);
-  const re = await st(pg); assert(re.phase === 'aim' && re.hp[0] === 100 && re.hp[1] === 100, 'rematch reset');
-  console.log('hot-seat OK, final', fin.hp, 'winner', fin.winner);
+  const re = await st(pg); assert(re.phase === 'aim' && re.hp[0] === 100 && re.hp[1] === 100 && re.score.join() === '0,0' && re.turn === 1 - fin.winner, 'rematch series reset');
+  console.log('hot-seat Bo3 OK, final score', fin.score, 'winner', fin.winner);
   await pg.close();
 }
 
@@ -172,19 +188,30 @@ if (which !== 'hot') {
     [B, { name: 'Bella<i>!', color: 'teal', helmet: 'hood', emblem: 'star', bow: 'gold', fletch: 'pink', taunt: 5 }]]) {
     await P.evaluate(l => localStorage.setItem('ad3t-look-0', JSON.stringify(l)), l); await P.reload({ waitUntil: 'networkidle0' }); await P.waitForFunction('window.__ready'); await sleep(300);
   }
-  await A.click('#arenas button[data-a="dusk"]');
+  await A.click('#arenas button[data-a="dusk"]'); await A.click('#seriesBtns button[data-s="3"]');
   await A.click('#createBtn');
   await A.waitForFunction(() => /^[A-Z0-9]{4}$/.test(document.querySelector('#code').textContent), { timeout: 15000 });
   const code = await A.$eval('#code', e => e.textContent);
-  await sleep(300);
-  await A.screenshot({ path: `${out}/online-room-code.png` });
-  console.log('room code', code);
-  await B.type('#codeIn', code.toLowerCase());
-  await B.click('#joinBtn');
+  console.log('room code', code, '|', await A.$eval('#lobbyBest', e => e.textContent));
+  { // share link: navigator.share if present, else the link goes to the clipboard
+    await A.browserContext().overridePermissions(base, ['clipboard-read', 'clipboard-write', 'clipboard-sanitized-write']).catch(() => {});
+    const hasShare = await A.evaluate(() => !!navigator.share);
+    await A.click('#shareBtn'); await sleep(300);
+    const btn = await A.$eval('#shareBtn', e => e.textContent), msg = await A.$eval('#lobbyMsg', e => e.textContent);
+    const clip = await A.evaluate(() => navigator.clipboard.readText().catch(e => 'ERR ' + e.message));
+    console.log('share: navigator.share', hasShare, '| button', btn, '| clipboard', clip, '| msg', msg);
+    assert(hasShare || clip === `${base}/?room=${code}` || msg.includes(`/?room=${code}`), 'share link is the room URL');
+    await A.screenshot({ path: `${out}/online-room-share.png` });
+  }
+  // B opens the share link: auto-joins with its saved look, no code entry
+  await B.goto(`${base}/?room=${code}`, { waitUntil: 'networkidle0' });
   await A.waitForFunction(() => __game.S.mode === 'online' && __game.S.phase === 'aim', { timeout: 15000 });
   await B.waitForFunction(() => __game.S.mode === 'online' && __game.S.phase === 'aim', { timeout: 15000 });
+  console.log('B joined via link; B url now', B.url());
+  assert(!B.url().includes('room='), 'link param cleared');
   const [sa, sb] = [await st(A), await st(B)];
   console.log('started', sa, sb);
+  assert(sa.best === 3 && sb.best === 3 && sa.score.join() === '0,0', 'Best of 3 on both');
   assert(sa.arena === 'dusk' && sb.arena === 'dusk', 'arena synced');
   assert(await A.evaluate(() => __game.S.me) === 0 && await B.evaluate(() => __game.S.me) === 1, 'seats');
   { // each player sees the other's look and name
@@ -214,8 +241,8 @@ if (which !== 'hot') {
     assert(ma.vis.every((v, k) => v.hp === ma.hp[k]) && mb.vis.every((v, k) => v.hp === mb.hp[k]), 'merlon visuals in sync');
     if (want === 0) { assert(ma.vis[hit.merlon].fallen && mb.vis[hit.merlon].fallen, 'fell on both'); await A.screenshot({ path: `${out}/online-A-merlon-off.png` }); }
   }
-  let n = 0;
-  while (n < 14) {
+  let n = 0, rounds = 0;
+  while (n < 80) {
     const s = await st(A);
     if (s.phase === 'over') break;
     const P = s.turn === 0 ? A : B, O = s.turn === 0 ? B : A;
@@ -224,26 +251,57 @@ if (which !== 'hot') {
     assert(await P.evaluate(a => __game.shootAim(a, 'normal'), aim), 'active player can shoot');
     await O.waitForFunction(() => __game.S.phase === 'fly', { timeout: 10000 });
     if (n === 0) { await sleep(700); await B.screenshot({ path: `${out}/online-B-fly.png` }); }
-    await settle(A); await settle(B);
+    await done(A); await done(B);
     const [a2, b2] = [await st(A), await st(B)];
-    console.log('online shot', n, 'by', s.turn, 'hp A', a2.hp, 'hp B', b2.hp, 'turn', a2.turn, b2.turn);
+    console.log('online shot', n, 'by', s.turn, 'hp A', a2.hp, 'hp B', b2.hp, 'turn', a2.turn, b2.turn, a2.phase, b2.phase, 'score A', a2.score.join('-'), 'B', b2.score.join('-'));
     assert(JSON.stringify(a2.hp) === JSON.stringify(b2.hp), 'HP in sync');
-    assert(a2.turn === b2.turn, 'turn in sync');
-    assert(a2.phase === 'over' || a2.turn !== s.turn, 'turn passed');
+    assert(a2.score.join() === b2.score.join(), 'score in sync');
+    assert(a2.phase === b2.phase, 'phase in sync');
     assert(a2.hp[1 - s.turn] < s.hp[1 - s.turn], 'hit registered');
+    if (a2.phase === 'round') {
+      rounds++;
+      assert(a2.score[0] + a2.score[1] === rounds, 'round scored');
+      if (rounds === 1) await A.screenshot({ path: `${out}/online-A-round-card.png` });
+      await settle(A); await settle(B);
+      const [a3, b3] = [await st(A), await st(B)];
+      console.log('online round', rounds, 'next: score', a3.score.join('-'), b3.score.join('-'), 'turn', a3.turn, b3.turn, 'hp', a3.hp, b3.hp, 'merlons', a3.merl, b3.merl, 'arena', a3.arena);
+      assert(a3.phase === 'aim' && b3.phase === 'aim' && a3.turn === 1 - s.turn && b3.turn === a3.turn, 'next round, loser first');
+      assert(a3.hp.join() === '100,100' && b3.hp.join() === '100,100' && a3.merl === '2'.repeat(14) && b3.merl === a3.merl && a3.arena === 'dusk', 'round reset, same arena');
+      assert(a3.score.join() === b3.score.join() && a3.score.join() === a2.score.join(), 'score kept');
+      if (rounds === 1) {
+        await sleep(600); await A.screenshot({ path: `${out}/online-A-score-pill.png` });
+        console.log('pill A', await A.$eval('#score', e => e.textContent), '| pill B', await B.$eval('#score', e => e.textContent));
+      }
+    } else assert(a2.phase === 'over' || (a2.turn !== s.turn && a2.turn === b2.turn), 'turn passed');
     n++;
   }
   const [fa, fb] = [await st(A), await st(B)];
   assert(fa.phase === 'over' && fb.phase === 'over' && fa.winner === fb.winner, 'both see same winner');
+  assert(fa.score.join() === fb.score.join() && Math.max(...fa.score) === 2, 'series over at 2 wins, same score');
   const [wa, wb] = [await A.$eval('#winner', e => e.textContent), await B.$eval('#winner', e => e.textContent)];
-  console.log('win screens:', wa, '|', wb);
-  await A.screenshot({ path: `${out}/online-A-over.png` });
+  console.log('series end screens:', wa, '|', wb, '|', await A.$eval('#overScore', e => e.textContent), '|', await A.$eval('#taunt', e => e.textContent), '| button', await A.$eval('#rematch', e => e.textContent));
+  await sleep(500); await A.screenshot({ path: `${out}/online-A-over.png` }); await B.screenshot({ path: `${out}/online-B-over.png` });
+  { // invalid and full room links
+    const C = await open(390, 844, true, await b.createBrowserContext(), `${base}/?room=ZZZZ`);
+    await C.waitForFunction(() => /Couldn't join/.test(document.querySelector('#homeMsg').textContent), { timeout: 10000 });
+    const m1 = await C.$eval('#homeMsg', e => e.textContent), home = await C.$eval('#home', e => !e.classList.contains('hidden'));
+    await C.screenshot({ path: `${out}/invalid-link.png` });
+    await C.goto(`${base}/?room=${code}`, { waitUntil: 'load' }); await C.waitForFunction('window.__ready', { timeout: 20000 });
+    await C.waitForFunction(() => /Couldn't join/.test(document.querySelector('#homeMsg').textContent), { timeout: 10000 });
+    const m2 = await C.$eval('#homeMsg', e => e.textContent);
+    await C.goto(`${base}/?room=bad!`, { waitUntil: 'load' }); await C.waitForFunction('window.__ready', { timeout: 20000 }); await sleep(300);
+    const m3 = await C.$eval('#homeMsg', e => e.textContent);
+    console.log('invalid link:', m1, '| home shown', home, '| full room:', m2, '| malformed:', m3);
+    assert(home && /not found/i.test(m1) && /full/i.test(m2) && /valid/.test(m3) && (await st(C)).mode === 'menu', 'bad links handled');
+    await C.close();
+  }
   await A.click('#rematch'); await sleep(500);
   await B.waitForFunction(() => /rematch/i.test(document.querySelector('#overMsg').textContent), { timeout: 5000 });
   await B.click('#rematch');
   await A.waitForFunction(() => __game.S.phase === 'aim' && __game.S.hp[0] === 100, { timeout: 10000 });
   await B.waitForFunction(() => __game.S.phase === 'aim' && __game.S.hp[1] === 100, { timeout: 10000 });
-  console.log('rematch started, turn', (await st(A)).turn, (await st(B)).turn);
+  { const [ra, rb] = [await st(A), await st(B)]; assert(ra.score.join() === '0,0' && rb.score.join() === '0,0' && ra.best === 3 && ra.turn === 1 - fa.winner && rb.turn === ra.turn, 'rematch series reset, series loser first'); }
+  console.log('rematch series started, turn', (await st(A)).turn, (await st(B)).turn);
   await B.close();
   await A.waitForFunction(() => !document.querySelector('#notice').classList.contains('hidden'), { timeout: 30000 });
   console.log('A notice:', await A.$eval('#noticeText', e => e.textContent));

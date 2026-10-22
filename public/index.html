@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="build" content="ad3t-v4.3">
+<meta name="build" content="ad3t-v4.4">
 <title>Archery Duel: Castle Siege</title>
 <link rel="preload" href="fonts/Fredoka-700.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Ctext y=%2214%22 font-size=%2214%22%3E%F0%9F%8F%B9%3C/text%3E%3C/svg%3E">
@@ -14,11 +14,12 @@
 <body>
 <div id="hud" class="hidden">
   <div class="hp" id="hp0"><svg class="shield" viewBox="0 0 40 46"><path d="M20 2 37 8v14c0 12-8 19-17 22C11 41 3 34 3 22V8z" fill="#2f6fe0" stroke="#eef3fb" stroke-width="3.5" stroke-linejoin="round"/><path d="M10.5 27 12 15l4.5 5L20 12l3.5 8 4.5-5 1.5 12z" fill="#ffd23f" stroke="#7a4b00" stroke-width="1.6" stroke-linejoin="round"/></svg><div class="bar"><i></i><b class="num">100</b></div><em class="you hidden">you</em></div>
-  <div id="mid"><div id="windTile"><svg id="windFlag" viewBox="0 0 40 40"><path d="M9 6v30" stroke="#6b4a2a" stroke-width="3.5" stroke-linecap="round"/><path d="M10 7c7-3 12 4 22 1-2 4-2 9 0 13-10 3-15-4-22-1z" fill="#3d8bff" stroke="#1d3f86" stroke-width="2" stroke-linejoin="round"/></svg><span id="windNum">0.0</span></div><div id="turn" class="blue">Blue's turn</div></div>
+  <div id="mid"><div id="windTile"><svg id="windFlag" viewBox="0 0 40 40"><path d="M9 6v30" stroke="#6b4a2a" stroke-width="3.5" stroke-linecap="round"/><path d="M10 7c7-3 12 4 22 1-2 4-2 9 0 13-10 3-15-4-22-1z" fill="#3d8bff" stroke="#1d3f86" stroke-width="2" stroke-linejoin="round"/></svg><span id="windNum">0.0</span></div><div id="turn" class="blue">Blue's turn</div><div id="score" class="hidden"><span class="n0"></span><b>0 - 0</b><span class="n1"></span></div></div>
   <div class="hp" id="hp1"><em class="you hidden">you</em><div class="bar"><i></i><b class="num">100</b></div><svg class="shield" viewBox="0 0 40 46"><path d="M20 2 37 8v14c0 12-8 19-17 22C11 41 3 34 3 22V8z" fill="#e0342c" stroke="#ffd23f" stroke-width="3.5" stroke-linejoin="round"/><path d="M10.5 27 12 15l4.5 5L20 12l3.5 8 4.5-5 1.5 12z" fill="#ffd23f" stroke="#7a4b00" stroke-width="1.6" stroke-linejoin="round"/></svg></div>
 </div>
 <button id="menuBtn" class="hidden" aria-label="Menu">☰</button>
 <div id="pip" class="hidden"><span></span></div>
+<div id="roundCard" class="hidden"><b></b><span></span></div>
 <div id="bottom" class="hidden">
   <div id="hint"></div>
   <div id="readout"></div>
@@ -31,19 +32,21 @@
 <div id="home" class="panel">
   <h1>Archery Duel</h1>
   <div class="sub">Castle Siege</div>
+  <div class="chips" id="seriesBtns"><button data-s="1" class="on">Single</button><button data-s="3">Best of 3</button><button data-s="5">Best of 5</button></div>
   <div class="chips" id="arenas"><button data-a="random" class="on">Random</button><button data-a="field">Sunny Field</button><button data-a="dusk">Stormy Dusk</button><button data-a="winter">Winter Siege</button></div>
   <button id="customBtn">Customise</button>
   <button id="hotBtn">Hot-seat (one device)</button>
   <button id="createBtn">Create room</button>
   <div class="row"><input id="codeIn" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false"><button id="joinBtn">Join room</button></div>
   <div id="homeMsg" class="msg"></div>
-  <div class="build">ad3t-v4.3</div>
+  <div class="build">ad3t-v4.4</div>
 </div>
 <div id="lobby" class="panel hidden">
   <h2>Room code</h2>
   <div id="code">····</div>
-  <button id="copyBtn">Copy code</button>
-  <p class="msg">Waiting for your opponent to join…</p>
+  <div id="lobbyBest" class="sub"></div>
+  <div class="row2"><button id="copyBtn">Copy code</button><button id="shareBtn">Share link</button></div>
+  <p class="msg" id="lobbyMsg">Waiting for your opponent to join…</p>
   <button id="cancelBtn">Cancel</button>
 </div>
 <div id="menu" class="panel hidden">
@@ -75,9 +78,10 @@
 <div id="over" class="panel hidden">
   <h2 id="winner">Blue wins!</h2>
   <div id="taunt"></div>
+  <div id="overScore"></div>
   <p id="overMsg" class="msg"></p>
   <button id="rematch">Rematch</button>
-  <button id="overHome">Main menu</button>
+  <button id="overHome">Menu</button>
 </div>
 <div id="notice" class="panel hidden">
   <h2 id="noticeText">Opponent left</h2>

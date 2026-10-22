@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { DIST, HP, ARROWS, ARENA_IDS, WALL_H, SHOULDER, makeWorld, simulateShot, applyShot, applyResult, fullMerlons, winnerOf, randomWind, launch, G } from './sim.js';
+import { DIST, HP, ARROWS, ARENA_IDS, WALL_H, SHOULDER, seriesWinnerOf, makeWorld, simulateShot, applyShot, applyResult, fullMerlons, winnerOf, randomWind, launch, G } from './sim.js';
 import { buildArena, heraldry, toon, noOutline } from './world.js';
 import { PALETTE, FLETCH, HELMETS, EMBLEMS, BOWS, TAUNTS, sanitizeLook, teamColors, hexOf, cleanName } from './looks.js';
 import * as sfx from './audio.js';
@@ -156,17 +156,18 @@ const stuck = [];
 
 // ---------- state ----------
 const S = { mode: 'menu', phase: 'menu', me: 0, turn: 0, hp: [HP, HP], merlons: fullMerlons(), wind: { x: 0, z: 0 }, aim: { pitch: 0.5, power: 0 }, draw: 0,
-  types: ['normal', 'normal'], arenaChoice: 'random', arenaId: 'field', play: null, queue: [], winner: -1, focus: null };
+  types: ['normal', 'normal'], seriesChoice: 1, best: 1, score: [0, 0], seriesWinner: -1, pending: null, cardT: 0, arenaChoice: 'random', arenaId: 'field', play: null, queue: [], winner: -1, focus: null };
 const viewer = () => (S.mode === 'online' ? S.me : S.turn);
 const myTurn = () => S.phase === 'aim' && (S.mode === 'hot' || S.turn === S.me);
 
-function startMatch({ arenaId, mode, me = 0, turn = 0, hp = [HP, HP], merlons = fullMerlons(), wind, looks: ls = [loadLook(0), loadLook(1)] }) {
+function startMatch({ arenaId, mode, me = 0, turn = 0, hp = [HP, HP], merlons = fullMerlons(), wind, looks: ls = [loadLook(0), loadLook(1)], best = 1, score = [0, 0] }) {
   setLooks(ls);
   if (arenaId !== S.arenaId || !world) setArena(arenaId);
   for (const a of stuck) a.removeFromParent();
   stuck.length = 0;
   arena.resetMerlons(merlons);
-  Object.assign(S, { mode, me, turn, hp: [...hp], merlons: [...merlons], wind, arenaId, phase: 'aim', winner: -1, play: null, queue: [], focus: null, draw: 0 });
+  Object.assign(S, { mode, me, turn, hp: [...hp], merlons: [...merlons], wind, arenaId, phase: 'aim', winner: -1, play: null, queue: [], focus: null, draw: 0, best, score: [...score], seriesWinner: -1, pending: null, cardT: 0 });
+  show('#roundCard', false);
   archers.forEach((a, i) => a.pose(0.5, 0, true, S.types[i]));
   ['#home', '#lobby', '#over', '#menu', '#notice'].forEach(s => show(s, false));
   ['#hud', '#menuBtn', '#bottom'].forEach(s => show(s, true));
@@ -175,18 +176,18 @@ function startMatch({ arenaId, mode, me = 0, turn = 0, hp = [HP, HP], merlons = 
   camJump = true; updateHud();
 }
 const pickArena = () => (S.arenaChoice === 'random' ? ARENA_IDS[Math.floor(Math.random() * ARENA_IDS.length)] : S.arenaChoice);
-const startHot = (arenaId = pickArena()) => startMatch({ arenaId, mode: 'hot', wind: randomWind() });
+const startHot = (arenaId = pickArena(), turn = 0) => startMatch({ arenaId, mode: 'hot', wind: randomWind(), turn, best: S.seriesChoice }); // a new series
 function goHome() {
   if (S.mode === 'online' && sock) sock.emit('leave');
-  Object.assign(S, { mode: 'menu', phase: 'menu', play: null, queue: [] });
-  ['#hud', '#menuBtn', '#bottom', '#pip', '#lobby', '#over', '#menu', '#notice'].forEach(s => show(s, false));
+  Object.assign(S, { mode: 'menu', phase: 'menu', play: null, queue: [], pending: null, cardT: 0 });
+  ['#hud', '#menuBtn', '#bottom', '#pip', '#lobby', '#over', '#menu', '#notice', '#roundCard'].forEach(s => show(s, false));
   show('#home', true); $('#homeMsg').textContent = '';
   setLooks([loadLook(0), loadLook(1)]);
 }
 function notice(msg) {
   if (S.mode !== 'online') return;
-  S.mode = 'menu'; S.phase = 'menu';
-  ['#over', '#menu', '#lobby'].forEach(s => show(s, false));
+  S.mode = 'menu'; S.phase = 'menu'; S.pending = null; S.cardT = 0;
+  ['#over', '#menu', '#lobby', '#roundCard'].forEach(s => show(s, false));
   $('#noticeText').textContent = msg; show('#notice', true);
 }
 
@@ -196,7 +197,9 @@ function fire() {
   preview.visible = false; $('#readout').textContent = '';
   if (S.mode === 'online') { S.phase = 'wait'; sock.emit('shoot', { aim, type }); updateHud(); return; }
   const sim = simulateShot(world, S.turn, aim, S.wind, type, S.merlons), after = applyShot(S.hp, S.merlons, sim);
-  playShot({ shooter: S.turn, aim, sim, hp: after.hp, merlons: after.merlons, turn: 1 - S.turn, wind: randomWind(), winner: winnerOf(after.hp) });
+  const winner = winnerOf(after.hp), score = [...S.score];
+  if (winner >= 0) score[winner]++;
+  playShot({ shooter: S.turn, aim, sim, hp: after.hp, merlons: after.merlons, turn: winner >= 0 ? 1 - winner : 1 - S.turn, wind: randomWind(), winner, score, seriesWinner: seriesWinnerOf(score, S.best) });
 }
 function playShot(m) {
   if (S.play) { S.queue.push(m); return; }
@@ -251,10 +254,20 @@ function endShot() {
   S.focus = lead ? lead.m.getWorldPosition(new V()) : null;
   m.merlons.forEach((h, id) => arena.setMerlon(id, h, true)); // authoritative state
   Object.assign(S, { hp: [...m.hp], merlons: [...m.merlons], turn: m.turn, wind: m.wind, play: null, aim: { pitch: 0.5, power: 0 } });
-  if (m.winner >= 0) {
-    S.phase = 'over'; S.winner = m.winner;
-    $('#winner').textContent = S.mode === 'online' ? (m.winner === S.me ? 'You win!' : 'You lose') : `${nameOf(m.winner)} wins!`;
-    $('#taunt').textContent = `${nameOf(m.winner)}: “${TAUNTS[looks[m.winner].taunt]}”`; $('#taunt').style.background = css(cols[m.winner]);
+  if (m.winner >= 0) S.score = [...m.score];
+  if (m.winner >= 0 && m.seriesWinner < 0) { // round over: card, then the next round (loser shoots first; online the server sends it)
+    S.phase = 'round'; S.winner = m.winner; S.cardT = 2.4;
+    $('#roundCard b').textContent = S.mode === 'online' && m.winner === S.me ? 'Round to you!' : `Round to ${nameOf(m.winner)}!`;
+    $('#roundCard span').textContent = `${S.score[0]} - ${S.score[1]}`; $('#roundCard').style.borderColor = css(cols[m.winner]);
+    show('#roundCard', true); sfx.ding();
+    if (S.mode === 'hot') S.pending = { arenaId: S.arenaId, mode: 'hot', wind: randomWind(), turn: 1 - m.winner, best: S.best, score: S.score };
+  } else if (m.winner >= 0) { // series (or single match) over
+    const w = m.seriesWinner, series = S.best > 1, online = S.mode === 'online';
+    S.phase = 'over'; S.winner = w; S.seriesWinner = w;
+    $('#winner').textContent = online ? (w === S.me ? `You win${series ? ' the series' : ''}!` : `You lose${series ? ' the series' : ''}`) : `${nameOf(w)} wins${series ? ' the series' : ''}!`;
+    $('#taunt').textContent = `${nameOf(w)}: “${TAUNTS[looks[w].taunt]}”`; $('#taunt').style.background = css(cols[w]);
+    $('#overScore').textContent = series ? `${nameOf(0)} ${S.score[0]} - ${S.score[1]} ${nameOf(1)}` : '';
+    $('#rematch').textContent = series ? 'Rematch series' : 'Rematch';
     $('#overMsg').textContent = ''; $('#rematch').disabled = false; show('#over', true); sfx.fanfare();
   } else {
     S.phase = 'aim';
@@ -333,7 +346,7 @@ document.querySelectorAll('#arenas button').forEach(b => b.onclick = () => {
   if (b.dataset.a !== 'random') { setArena(b.dataset.a); S.arenaId = b.dataset.a; }
 });
 $('#hotBtn').onclick = () => { sfx.unlock(); startHot(); };
-$('#createBtn').onclick = () => { sfx.unlock(); net().emit('create', { arena: S.arenaChoice, look: myLook() }); $('#homeMsg').textContent = 'Creating room…'; };
+$('#createBtn').onclick = () => { sfx.unlock(); net().emit('create', { arena: S.arenaChoice, look: myLook(), best: S.seriesChoice }); $('#homeMsg').textContent = 'Creating room…'; };
 $('#joinBtn').onclick = () => {
   sfx.unlock();
   const code = $('#codeIn').value.trim().toUpperCase();
@@ -341,6 +354,18 @@ $('#joinBtn').onclick = () => {
   net().emit('join', { code, look: myLook() }); $('#homeMsg').textContent = 'Joining…';
 };
 $('#codeIn').addEventListener('keydown', e => { if (e.key === 'Enter') $('#joinBtn').click(); });
+const roomLink = () => `${location.origin}/?room=${$('#code').textContent}`;
+function copyText(t) { // clipboard API, falling back to a hidden textarea
+  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(t);
+  const ta = Object.assign(document.createElement('textarea'), { value: t }); document.body.appendChild(ta); ta.select();
+  const ok = document.execCommand('copy'); ta.remove(); return ok ? Promise.resolve() : Promise.reject();
+}
+$('#shareBtn').onclick = () => {
+  const url = roomLink(), done = t => { $('#shareBtn').textContent = t; setTimeout(() => { $('#shareBtn').textContent = 'Share link'; }, 1800); };
+  if (navigator.share) navigator.share({ title: 'Archery Duel', text: 'Duel me in Archery Duel!', url }).catch(() => {});
+  else copyText(url).then(() => done('Link copied!'), () => { $('#lobbyMsg').textContent = url; });
+};
+$('#seriesBtns').onclick = e => { const v = +e.target.dataset.s; if (!v) return; S.seriesChoice = v; document.querySelectorAll('#seriesBtns button').forEach(b => b.classList.toggle('on', +b.dataset.s === v)); };
 $('#copyBtn').onclick = () => {
   const code = $('#code').textContent;
   (navigator.clipboard ? navigator.clipboard.writeText(code) : Promise.reject()).then(() => { $('#copyBtn').textContent = 'Copied!'; }, () => { $('#copyBtn').textContent = `Code: ${code}`; });
@@ -355,7 +380,7 @@ $('#overHome').onclick = goHome;
 $('#noticeBtn').onclick = goHome;
 $('#muteBtn').onclick = () => { sfx.setMuted(!sfx.isMuted()); updateHud(); };
 $('#rematch').onclick = () => {
-  if (S.mode === 'hot') return startHot(S.arenaId);
+  if (S.mode === 'hot') return startHot(S.arenaId, 1 - S.seriesWinner);
   sock.emit('rematch'); $('#rematch').disabled = true; $('#overMsg').textContent = 'Waiting for opponent…';
 };
 
@@ -364,9 +389,16 @@ let sock = null;
 function net() {
   if (sock) return sock;
   sock = window.io();
-  sock.on('created', ({ code }) => { $('#code').textContent = code; show('#home', false); show('#lobby', true); });
-  sock.on('joinError', msg => { $('#homeMsg').textContent = msg; });
-  sock.on('start', ({ arena: id, you, hp, merlons, turn, wind, looks: ls }) => startMatch({ arenaId: id, mode: 'online', me: you, hp, merlons, turn, wind, looks: ls }));
+  sock.on('created', ({ code, best }) => {
+    $('#code').textContent = code; $('#lobbyBest').textContent = best > 1 ? `Best of ${best}` : 'Single match';
+    show('#home', false); show('#lobby', true);
+  });
+  sock.on('joinError', msg => { show('#lobby', false); show('#home', true); $('#homeMsg').textContent = autoJoin ? `Couldn't join room ${autoJoin}: ${msg}.` : msg; autoJoin = null; });
+  sock.on('start', ({ arena: id, you, hp, merlons, turn, wind, looks: ls, best, score }) => {
+    autoJoin = null;
+    const m = { arenaId: id, mode: 'online', me: you, hp, merlons, turn, wind, looks: ls, best, score };
+    if (S.mode === 'online' && (S.play || S.cardT > 0)) S.pending = m; else startMatch(m); // let the last shot and round card finish first
+  });
   sock.on('aim', a => { if (S.mode === 'online' && S.phase === 'aim' && S.turn !== S.me) archers[S.turn].pose(a.pitch, a.draw, true, S.types[S.turn]); });
   sock.on('shot', m => { if (S.mode === 'online') playShot(m); });
   sock.on('rematchAsk', () => { $('#overMsg').textContent = 'Opponent wants a rematch!'; });
@@ -395,6 +427,8 @@ function updateHud() {
   });
   $('#turn').textContent = online && S.turn === S.me ? 'Your turn' : `${nameOf(S.turn)}'s turn`;
   $('#turn').style.background = css(cols[S.turn]);
+  show('#score', S.best > 1);
+  if (S.best > 1) { $('#score .n0').textContent = nameOf(0); $('#score .n1').textContent = nameOf(1); $('#score b').textContent = `${S.score[0]} - ${S.score[1]}`; }
   const along = S.wind.x * archers[S.turn].f, w = Math.abs(S.wind.x); // wind is only ever along the shot line
   $('#windNum').textContent = w < 0.05 ? 'Calm' : `${along > 0 ? 'Tail' : 'Head'} ${w.toFixed(1)}`;
   $('#windNum').style.color = w < 0.05 ? '' : along > 0 ? '#2f9a22' : '#d0251c'; // tail helps (green), head hurts (red)
@@ -441,6 +475,8 @@ function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
   time += dt;
   if (S.play) updatePlay(dt);
+  if (S.cardT > 0) S.cardT -= dt;
+  if (S.pending && !S.play && S.cardT <= 0) { const p = S.pending; S.pending = null; startMatch(p); }
   if (flashT > 0 && (flashT -= dt) <= 0 && !drag) $('#readout').textContent = '';
   arena.update(dt, time, S.phase === 'menu' ? { x: 1.5, z: 0.5 } : S.wind, camera.position, sfx);
   const [tp, tl] = camTarget(time), k = camJump ? 1 : 1 - Math.exp(-dt * (S.phase === 'fly' ? 10 : 4.5));
@@ -471,6 +507,16 @@ function frame() {
   requestAnimationFrame(frame);
 }
 setArena('field');
+let autoJoin = null; // ?room=CODE links join straight away (with the saved look)
+{
+  const q = new URLSearchParams(location.search).get('room');
+  if (q !== null) {
+    history.replaceState(null, '', location.pathname);
+    const code = q.toUpperCase().trim();
+    if (/^[A-Z0-9]{4}$/.test(code)) { autoJoin = code; $('#homeMsg').textContent = `Joining room ${code}…`; setTimeout(() => net().emit('join', { code, look: myLook() }), 0); }
+    else $('#homeMsg').textContent = "That room link isn't valid.";
+  }
+}
 const myLook = () => (localStorage.getItem('ad3t-look-0') ? loadLook(0) : null); // online sends Player 1's look (if customised)
 // ---------- customise screen: live rotating 3D preview rendered into #preview with the main renderer ----------
 const pvScene = new THREE.Scene(), pvCam = new THREE.PerspectiveCamera(30, 1, 0.1, 50);
