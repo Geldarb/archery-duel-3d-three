@@ -63,14 +63,15 @@ export function validateBuild(s, plan) {
     const c = plan.blocks[n];
     if (!Array.isArray(c) || !isInt(c[0], -BUILD_GRID, BUILD_GRID - 1) || !isInt(c[1], -BUILD_GRID, BUILD_GRID - 1)) return fail('Too far from your tower', n);
     const x = tx + (c[0] + 0.5) * CELL, z = (c[1] + 0.5) * CELL, sf = surface(boxes, x, z, H[0], H[2]);
-    if (!sf.on) return fail('Nothing to rest on there', n);
-    if (sf.top + CELL > BUILD_TOP + 1e-6) return fail('Too high', n);
+    const at = [rd(x), rd(sf.top + CELL / 2), rd(z)];
+    if (!sf.on) return { ...fail('Nothing to rest on there', n), pos: at };
+    if (sf.top + CELL > BUILD_TOP + 1e-6) return { ...fail('Too high', n), pos: at };
     const p = [rd(x), rd(sf.top + CELL / 2), rd(z)]; out.push(p); boxes.push(box(p, H));
   }
   const a = plan.archer || [0, 0];
   if (!Array.isArray(a) || !isInt(a[0], -ARCHER_GRID, ARCHER_GRID) || !isInt(a[1], -ARCHER_GRID, ARCHER_GRID)) return fail('Archer must stay on your tower');
   const ax = tx + a[0] * 0.4, az = a[1] * 0.4, sf = surface(boxes, ax, az, ARCHER_HALF[0], ARCHER_HALF[2]);
-  if (!sf.on || sf.top < 0.5) return fail('Archer needs solid stone underfoot');
+  if (!sf.on || sf.top < 0.5) return { ...fail('Archer needs solid stone underfoot'), pos: out.at(-1) };
   if (sf.top > BUILD_TOP + 1e-6) return fail('Too high');
   return { ok: true, blocks: out, archer: [rd(ax), rd(sf.top), rd(az)] };
 }
@@ -136,10 +137,17 @@ export function archerHit(ap, p) { // chunky, big-headed archer whose feet are a
   if (y > 0 && y < 1.25 && r2d < 0.34 ** 2) return 'body';
   return null;
 }
-// aim: { pitch, power 0..1 }. No sideways aim: every shot flies straight down the lane (z = 0). Launch from wherever the archer now stands.
-export function launch(i, aim, ap = initialPhys().a[i]) {
-  const f = i ? -1 : 1, cp = Math.cos(aim.pitch);
-  const d = { x: f * cp, y: Math.sin(aim.pitch), z: 0 };
+// Archers always stand upright and face each other: the horizontal shot direction is the unit vector from the shooter's feet to the
+// opponent's feet (wherever a fall, a blast or the build phase left them), never anything from a physics body's rotation.
+export function facing(i, ap, op) {
+  const f = i ? -1 : 1, dx = op[0] - ap[0], dz = op[2] - ap[2], h = Math.hypot(dx, dz);
+  return h < 0.5 || dx * f <= 0 ? [f, 0] : [dx / h, dz / h]; // degenerate / crossed over: plain down-the-lane
+}
+export const yawOf = d => Math.atan2(-d[1], d[0]); // three.js rotation.y that turns the model's +x forward onto d
+// aim: { pitch, power 0..1 }. No free sideways aim: the shot flies along the facing direction. Launch from wherever the archer now stands.
+export function launch(i, aim, ap = initialPhys().a[i], op = initialPhys().a[1 - i]) {
+  const [fx, fz] = facing(i, ap, op), cp = Math.cos(aim.pitch);
+  const d = { x: fx * cp, y: Math.sin(aim.pitch), z: fz * cp };
   const v = MAXV * aim.power;
   return { pos: { x: ap[0] + d.x * 0.9, y: ap[1] + SHOULDER + d.y * 0.9, z: ap[2] + d.z * 0.9 }, vel: { x: d.x * v, y: d.y * v, z: d.z * v } };
 }
@@ -167,7 +175,7 @@ function collide(world, p, shooter, st, t, tb, pickupTaken) {
 // st = { phys: { b, a }, pickup }. Returns { type, arrows: [{ t0, pts: [[x,y,z] every 1/60 s], res: { kind, who?, block?, pickup?, dmg, pos, dir, t } }] }
 export function simulateShot(world, shooter, aim, wind, type = 'normal', st = { phys: initialPhys(), pickup: null }) {
   const T = ARROWS[type] || ARROWS.normal, DT = 1 / 240, out = [], tb = towerBoxes(st.phys.b);
-  const { pos, vel } = launch(shooter, aim, st.phys.a[shooter]);
+  const { pos, vel } = launch(shooter, aim, st.phys.a[shooter], st.phys.a[1 - shooter]);
   const queue = [{ t0: 0, p: pos, v: vel, child: false }];
   let taken = false;
   while (queue.length) {
@@ -180,8 +188,8 @@ export function simulateShot(world, shooter, aim, wind, type = 'normal', st = { 
       if (T.split && !a.child && vy0 > 0 && v.y <= 0) { // split into 3 at the top of the arc: high, middle and low (vertical spread, same line)
         a.child = true;
         for (const s of [1, -1]) {
-          const c = Math.cos(0.16 * s), sn = Math.sin(0.16 * s), h = Math.abs(v.x), sx = Math.sign(v.x);
-          queue.push({ t0: t, p: { ...p }, v: { x: sx * (h * c - v.y * sn), y: h * sn + v.y * c, z: v.z }, child: true });
+          const c = Math.cos(0.16 * s), sn = Math.sin(0.16 * s), h = Math.hypot(v.x, v.z), ux = v.x / h, uz = v.z / h, h2 = h * c - v.y * sn; // tilt within the shot's own vertical plane
+          queue.push({ t0: t, p: { ...p }, v: { x: ux * h2, y: h * sn + v.y * c, z: v.z === 0 ? v.z : uz * h2 }, child: true });
         }
       }
       const hit = collide(world, p, shooter, st, t, tb, taken);

@@ -104,6 +104,7 @@ export class PhysRun {
   }
   falls() { // fall damage scaled by height: small onto a lower block, big onto the ground
     this.archers.forEach((b, i) => {
+      if (b.quaternion.w !== 1) { b.quaternion.set(0, 0, 0, 1); b.angularVelocity.set(0, 0, 0); } // archers never tip over (fixedRotation + guard)
       const F = this.fall[i], vy = b.velocity.y;
       if (vy < -2.5) F.falling = true;
       if (F.falling && vy > -0.6 && b.sleepState !== C.Body.SLEEPING) {

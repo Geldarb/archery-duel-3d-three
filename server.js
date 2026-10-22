@@ -4,7 +4,7 @@ const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
 
-const BUILD = 'ad3t-v5';
+const BUILD = 'ad3t-v5.1';
 const app = express();
 app.get('/health', (req, res) => res.json({ ok: true, build: BUILD, rooms: rooms.size }));
 const fs = require('fs');
@@ -25,14 +25,28 @@ Promise.all([import('./public/sim.js'), import('./public/looks.js'), import('./p
   const start = r => { // one round; HP, towers (every block) and power-ups reset, arena and score kept
     clearTimeout(r.timer);
     r.rand = sim.rng(Math.floor(Math.random() * 2 ** 32)); // seeded per round: power-up timing / position / kind
-    Object.assign(r, { st: sim.newRound(r.rand), winner: -1, wind: sim.randomWind(), votes: new Set(), busy: 0 });
+    Object.assign(r, { phase: 'play', st: sim.newRound(r.rand, r.builds), winner: -1, wind: sim.randomWind(), votes: new Set(), busy: 0 }); // every round resets to the built layout
     r.socks.forEach((s, i) => s.emit('start', { arena: r.arena, you: i, st: r.st, turn: r.turn, wind: r.wind, looks: r.looks, best: r.best, score: r.score }));
   };
-  const newSeries = r => { r.score = [0, 0]; r.seriesWinner = -1; start(r); };
+  // build phase (once per series): both players build privately; the server validates + stores each plan, reveals both at the start
+  const BUILD_SECS = Math.max(5, Number(process.env.BUILD_SECS) || sim.BUILD_TIME);
+  const finishBuild = r => {
+    if (r.phase !== 'build' || rooms.get(r.code) !== r) return;
+    clearTimeout(r.buildTimer);
+    r.builds = [0, 1].map(i => r.res[i]); // last valid plan each (untouched tower if none)
+    start(r);
+  };
+  const newSeries = r => {
+    clearTimeout(r.timer); clearTimeout(r.buildTimer);
+    Object.assign(r, { score: [0, 0], seriesWinner: -1, phase: 'build', st: null, winner: -1, votes: new Set(), builds: null, ready: [false, false],
+      res: [0, 1].map(i => sim.validateBuild(i, sim.defaultPlan())), buildEnds: Date.now() + BUILD_SECS * 1000 });
+    r.buildTimer = setTimeout(() => finishBuild(r), BUILD_SECS * 1000 + 800); // small grace for a last-second Ready
+    r.socks.forEach((s, i) => s.emit('build', { arena: r.arena, you: i, turn: r.turn, looks: r.looks, best: r.best, score: r.score, time: BUILD_SECS }));
+  };
   const leave = sock => {
     const r = sock.data.room;
     if (!r) return;
-    rooms.delete(r.code); clearTimeout(r.timer);
+    rooms.delete(r.code); clearTimeout(r.timer); clearTimeout(r.buildTimer);
     for (const s of r.socks) if (s) { s.data.room = null; s.leave(r.code); if (s !== sock) s.emit('opponentLeft'); }
   };
   io.on('connection', sock => {
@@ -57,9 +71,21 @@ Promise.all([import('./public/sim.js'), import('./public/looks.js'), import('./p
       const r = sock.data.room, o = r && r.socks[1 - sock.data.idx];
       if (o && r.turn === sock.data.idx && a) o.emit('aim', { pitch: clamp(a.pitch, -1, 2), draw: clamp(a.draw, 0, 1) });
     });
+    sock.on('plan', ({ plan, ready } = {}) => {
+      const r = sock.data.room, i = sock.data.idx;
+      if (!r || !r.socks[1]) return;
+      if (r.phase !== 'build') return sock.emit('buildError', { err: 'Building is over', late: true });
+      if (r.ready[i]) return sock.emit('buildError', { err: 'Already ready' });
+      const v = sim.validateBuild(i, plan);
+      if (!v.ok) return sock.emit('buildError', { err: v.err, at: v.at });
+      r.res[i] = v;
+      if (ready) { r.ready[i] = true; const o = r.socks[1 - i]; if (o) o.emit('oppReady'); }
+      sock.emit('planOk', { ready: !!ready, n: v.blocks.length });
+      if (r.ready[0] && r.ready[1]) finishBuild(r);
+    });
     sock.on('shoot', ({ aim = {}, type } = {}) => {
       const r = sock.data.room, i = sock.data.idx;
-      if (!r || !r.socks[1] || r.winner >= 0 || r.turn !== i || Date.now() < r.busy) return; // only the active player, once the last shot has settled
+      if (!r || !r.socks[1] || r.phase !== 'play' || r.winner >= 0 || r.turn !== i || Date.now() < r.busy) return; // only the active player, once the last shot has settled
       const a = { pitch: clamp(aim.pitch, 0, 1.3), power: clamp(aim.power, 0.1, 1) }; // any client yaw is dropped
       if (!sim.ARROWS[type] || (sim.ARROWS[type].special && !(r.st.ammo[i][type] > 0))) type = 'normal'; // specials only if earned
       const shot = sim.simulateShot(r.world, i, a, r.wind, type, r.st);

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="build" content="ad3t-v5">
+<meta name="build" content="ad3t-v5.1">
 <meta name="color-scheme" content="only light">
 <meta name="theme-color" content="#2f6fe0">
 <meta name="mobile-web-app-capable" content="yes">
@@ -38,6 +38,24 @@
   </div>
 </div>
 
+<div id="build" class="hidden">
+  <div id="bTop"><b id="bTitle">Build your tower</b><span id="bCount">▦ 8/8</span><span id="bTimer"></span><span id="bOpp" class="hidden"></span></div>
+  <div id="bMsg"></div>
+  <div id="bBar">
+    <div id="bTools">
+      <button id="bUndo" aria-label="Undo">↶<small>Undo</small></button>
+      <div id="bTool"><button data-tool="block" class="on">▦ Block</button><button data-tool="archer">🏹 Archer</button></div>
+      <button id="bRot" aria-label="Turn view">⟳<small>Turn</small></button>
+      <button id="bConfirm" class="hidden">✓ Place</button>
+    </div>
+    <div id="bMain"><button id="bSkip">Skip</button><button id="bReady">Ready</button></div>
+  </div>
+</div>
+<div id="pass" class="panel hidden">
+  <header class="ph"><span class="hsp"></span><h2 id="passTitle">Build phase</h2><span class="hsp"></span></header>
+  <div class="pb"><div id="passEye">🙈</div><p id="passText"></p></div>
+  <footer class="pf"><button id="passSkip">Skip building</button><button id="passGo">Start building</button></footer>
+</div>
 <div id="home" class="panel">
   <header class="ph"><span class="hsp"></span><div class="ttl"><h1>Archery Duel</h1><div class="sub">Castle Siege</div></div><button id="fsHome" class="fsBtn icon" aria-label="Full screen"><svg class="fsIn" viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg><svg class="fsOut" viewBox="0 0 24 24"><path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/></svg></button></header>
   <div class="pb">
@@ -50,7 +68,7 @@
     <div id="homeMsg" class="msg"></div>
     <button id="installBtn" class="hidden"><svg viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M5 20h14"/></svg>Install app</button>
     <div id="installTip" class="tip hidden"></div>
-    <div class="build">ad3t-v5</div>
+    <div class="build">ad3t-v5.1</div>
   </div>
   <footer class="pf"><button id="hotBtn">Hot-seat</button><button id="createBtn">Create room</button></footer>
 </div>

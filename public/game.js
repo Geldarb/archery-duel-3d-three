@@ -1,8 +1,8 @@
-// Archery Duel 3D v5 — cartoon Castle Siege with physics towers and sky power-ups. Hot-seat + online rooms. Plain Three.js.
+// Archery Duel 3D v5.1 — cartoon Castle Siege with physics towers and sky power-ups. Hot-seat + online rooms. Plain Three.js.
 import * as THREE from 'three';
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { HP, ARROWS, ARENA_IDS, SHOULDER, SPECIALS, LAYOUT, seriesWinnerOf, makeWorld, simulateShot, finishShot, newRound, rng, winnerOf, randomWind, launch, initialPhys, G } from './sim.js';
+import { HP, ARROWS, ARENA_IDS, SHOULDER, SPECIALS, LAYOUT, BUILD_MAX, CELL, BUILD_TIME, DIST, validateBuild, defaultPlan, seriesWinnerOf, makeWorld, simulateShot, finishShot, newRound, rng, winnerOf, randomWind, launch, facing, yawOf, initialPhys, G } from './sim.js';
 import { PhysRun, shotEvents, STEP } from './physics.js';
 import { SPECIAL_UI, pickupModel } from './specials.js';
 import { buildArena, heraldry, toon, noOutline } from './world.js';
@@ -165,7 +165,10 @@ const viewer = () => (S.mode === 'online' ? S.me : S.turn);
 const myTurn = () => S.phase === 'aim' && (S.mode === 'hot' || S.turn === S.me);
 
 const clone = o => JSON.parse(JSON.stringify(o));
-const placeArchers = a => archers.forEach((x, i) => x.root.position.set(...a[i]));
+const placeArchers = a => { archers.forEach((x, i) => x.root.position.set(...a[i])); faceArchers(a); };
+function faceArchers(a) { // always upright, always facing the opponent's current spot (after falls, landings, build moves, every turn)
+  archers.forEach((x, i) => { x.root.rotation.set(0, yawOf(facing(i, a[i], a[1 - i])), 0); });
+}
 let pickupObj = null, pickupKey = '';
 const PICKUP_SCALE = 1.6; // big enough to read from across the field (hit radius PICKUP_R in sim.js)
 function showPickup(p, pop) { // the floating power-up balloon (state lives in S.st.pickup)
@@ -178,7 +181,9 @@ function showPickup(p, pop) { // the floating power-up balloon (state lives in S
   if (pop) { flash('A power-up floats in!'); sfx.ding(); }
 }
 const fading = [];
-function startMatch({ arenaId, mode, me = 0, turn = 0, st = null, wind, looks: ls = [loadLook(0), loadLook(1)], best = 1, score = [0, 0] }) {
+function startMatch({ arenaId, mode, me = 0, turn = 0, st = null, wind, looks: ls = [loadLook(0), loadLook(1)], best = 1, score = [0, 0], builds = null }) {
+  const fromBuild = S.phase === 'build' || S.phase === 'pass';
+  endBuildUi();
   setLooks(ls);
   if (arenaId !== S.arenaId || !world) setArena(arenaId);
   for (const a of stuck) a.removeFromParent();
@@ -186,7 +191,8 @@ function startMatch({ arenaId, mode, me = 0, turn = 0, st = null, wind, looks: l
   for (const f of fading) f.o.removeFromParent();
   fading.length = 0;
   S.rand = rng((Math.random() * 2 ** 32) >>> 0); // hot-seat power-up spawns (online: the server's seeded rng)
-  st = clone(st || newRound(S.rand));
+  st = clone(st || newRound(S.rand, builds)); // every round of a series resets to the layout built at its start
+  S.builds = builds;
   arena.resetBlocks(st.phys.b); placeArchers(st.phys.a); pickupKey = '-'; showPickup(st.pickup, false);
   for (const i of [0, 1]) if (ARROWS[S.types[i]].special) S.types[i] = 'normal';
   Object.assign(S, { mode, me, turn, hp: [...st.hp], st, wind, arenaId, phase: 'aim', winner: -1, play: null, queue: [], focus: null, draw: 0, best, score: [...score], seriesWinner: -1, pending: null, cardT: 0 });
@@ -199,19 +205,21 @@ function startMatch({ arenaId, mode, me = 0, turn = 0, st = null, wind, looks: l
   show('#restart', mode === 'hot');
   $('#homeBtn').textContent = mode === 'online' ? 'Leave room' : 'Main menu';
   camJump = true; updateHud();
+  if (fromBuild) flash('Towers revealed!');
 }
 const pickArena = () => (S.arenaChoice === 'random' ? ARENA_IDS[Math.floor(Math.random() * ARENA_IDS.length)] : S.arenaChoice);
-const startHot = (arenaId = pickArena(), turn = 0) => startMatch({ arenaId, mode: 'hot', wind: randomWind(), turn, best: S.seriesChoice }); // a new series
+const quickHot = (arenaId = pickArena(), turn = 0, builds = null) => startMatch({ arenaId, mode: 'hot', wind: randomWind(), turn, best: S.seriesChoice, builds }); // a new series, no build phase
+const startHot = (arenaId = pickArena(), turn = 0) => enterBuild({ arenaId, mode: 'hot', turn, best: S.seriesChoice }); // a new series starts with the build phase
 function goHome() {
   if (S.mode === 'online' && sock) sock.emit('leave');
-  Object.assign(S, { mode: 'menu', phase: 'menu', play: null, queue: [], pending: null, cardT: 0 });
+  Object.assign(S, { mode: 'menu', phase: 'menu', play: null, queue: [], pending: null, cardT: 0 }); endBuildUi();
   ['#hud', '#menuBtn', '#fsGame', '#bottom', '#pip', '#lobby', '#over', '#menu', '#notice', '#roundCard', '#help', '#custom'].forEach(s => show(s, false));
   show('#home', true); $('#homeMsg').textContent = '';
   setLooks([loadLook(0), loadLook(1)]);
 }
 function notice(msg) {
   if (S.mode !== 'online') return;
-  S.mode = 'menu'; S.phase = 'menu'; S.pending = null; S.cardT = 0;
+  S.mode = 'menu'; S.phase = 'menu'; S.pending = null; S.cardT = 0; endBuildUi();
   ['#over', '#menu', '#lobby', '#roundCard'].forEach(s => show(s, false));
   $('#noticeText').textContent = msg; openPanel('#notice');
 }
@@ -272,6 +280,7 @@ function stepPhysics(P) {
     P.vy[i] = vy;
   });
   run.archers.forEach((b, i) => archers[i].root.position.set(b.position.x, b.position.y - 0.8, b.position.z));
+  faceArchers(archers.map(x => x.root.position.toArray()));
   for (; P.fxi < run.fx.length; P.fxi++) {
     const e = run.fx[P.fxi], p = new V(...e.p);
     if (e.kind === 'hit') { arena.chunks(p, 4, new V(...P.m.sim.arrows[0].res.dir).setY(0).normalize().multiplyScalar(0.6)); arena.puff(p, 3, 0.3); sfx.crunch(1); shake = Math.max(shake, 0.15); }
@@ -340,7 +349,7 @@ function endShot() {
     $('#roundCard b').textContent = S.mode === 'online' && mm.winner === S.me ? 'Round to you!' : `Round to ${nameOf(mm.winner)}!`;
     $('#roundCard span').textContent = `${S.score[0]} - ${S.score[1]}`; $('#roundCard').style.borderColor = css(cols[mm.winner]);
     show('#roundCard', true); sfx.ding();
-    if (S.mode === 'hot') S.pending = { arenaId: S.arenaId, mode: 'hot', wind: randomWind(), turn: 1 - mm.winner, best: S.best, score: S.score };
+    if (S.mode === 'hot') S.pending = { arenaId: S.arenaId, mode: 'hot', wind: randomWind(), turn: 1 - mm.winner, best: S.best, score: S.score, builds: S.builds };
   } else if (mm.winner >= 0) { // series (or single match) over
     const w = mm.seriesWinner, series = S.best > 1, online = S.mode === 'online';
     S.phase = 'over'; S.winner = w; S.seriesWinner = w;
@@ -365,7 +374,7 @@ const preview = new THREE.Points(new THREE.BufferGeometry().setAttribute('positi
   noOutline(new THREE.PointsMaterial({ color: 0xffffff, size: 11, sizeAttenuation: false, map: dotTex(), alphaTest: 0.4, transparent: true, depthWrite: false })));
 preview.visible = false; scene.add(preview);
 function updatePreview() {
-  const { pos, vel } = launch(S.turn, S.aim, S.st.phys.a[S.turn]), attr = preview.geometry.attributes.position, g = G * ARROWS[S.types[S.turn]].g, dt = 1 / 34;
+  const { pos, vel } = launch(S.turn, S.aim, S.st.phys.a[S.turn], S.st.phys.a[1 - S.turn]), attr = preview.geometry.attributes.position, g = G * ARROWS[S.types[S.turn]].g, dt = 1 / 34;
   for (let k = 0; k < PREV_N; k++) {
     vel.y -= g * dt; pos.x += vel.x * dt; pos.y += vel.y * dt; pos.z += vel.z * dt;
     attr.setXYZ(k, pos.x, pos.y, pos.z);
@@ -374,7 +383,7 @@ function updatePreview() {
 }
 
 // ---------- input (screen space, same for both players): drag UP/DOWN = higher/lower angle, RIGHT/LEFT = more/less power ----------
-let drag = null, lastCreak = 0, lastAimSend = 0;
+let drag = null, bdrag = null, lastCreak = 0, lastAimSend = 0;
 const canvas = renderer.domElement;
 const PITCH_MIN = 5, PITCH_MAX = 70, POW_MIN = 0.15, DEAD = 12; // degrees; px a drag must move before release fires (taps don't)
 const lastAim = [{ pitch: 25, power: 0.6 }, { pitch: 25, power: 0.6 }]; // each archer's drag continues from their previous aim
@@ -385,10 +394,16 @@ function dragAim(dx, dy, from) { // dx/dy = pointer movement in px (screen y gro
 }
 canvas.addEventListener('pointerdown', e => {
   sfx.unlock();
+  if (S.phase === 'build') { bdrag = { x: e.clientX, y: e.clientY, yaw: BS.yaw, moved: false }; canvas.setPointerCapture(e.pointerId); return; }
   if (!myTurn()) return;
   drag = { x: e.clientX, y: e.clientY, from: { ...lastAim[S.turn] }, moved: false }; canvas.setPointerCapture(e.pointerId);
 });
 canvas.addEventListener('pointermove', e => {
+  if (bdrag && S.phase === 'build') { // drag = orbit the camera around your tower
+    const dx = e.clientX - bdrag.x;
+    if (bdrag.moved || Math.hypot(dx, e.clientY - bdrag.y) > DEAD) { bdrag.moved = true; BS.yaw = bdrag.yaw - dx / innerWidth * 3.2; }
+    return;
+  }
   if (!drag || !myTurn()) return;
   const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
   if (!drag.moved && Math.hypot(dx, dy) < DEAD) return;
@@ -406,7 +421,8 @@ canvas.addEventListener('pointermove', e => {
   updatePreview();
   if (S.mode === 'online' && performance.now() - lastAimSend > 100) { lastAimSend = performance.now(); sock.emit('aim', { pitch: S.aim.pitch, draw: t }); }
 });
-const endDrag = () => {
+const endDrag = e => {
+  if (bdrag) { const b = bdrag; bdrag = null; if (!b.moved && S.phase === 'build' && e && e.type === 'pointerup') buildTap(e.clientX, e.clientY); return; }
   if (!drag) return;
   const moved = drag.moved;
   drag = null; lastCreak = 0; show('#aimTip', false);
@@ -540,6 +556,10 @@ function net() {
     const m = { arenaId: id, mode: 'online', me: you, st, turn, wind, looks: ls, best, score };
     if (S.mode === 'online' && (S.play || S.cardT > 0)) S.pending = m; else startMatch(m); // let the last shot and round card finish first
   });
+  sock.on('build', m => { autoJoin = null; enterBuild({ arenaId: m.arena, mode: 'online', me: m.you, turn: m.turn, looks: m.looks, best: m.best, score: m.score, time: m.time }); });
+  sock.on('buildError', ({ err, late }) => { if (S.phase !== 'build' || late) return; BS.sent = false; buildMsg(err, true); renderBuildUi(); });
+  sock.on('planOk', ({ ready }) => { if (ready && S.phase === 'build') { BS.locked = true; renderBuildUi(); } });
+  sock.on('oppReady', () => { BS.oppReady = true; renderBuildUi(); });
   sock.on('aim', a => { if (S.mode === 'online' && S.phase === 'aim' && S.turn !== S.me) archers[S.turn].pose(a.pitch, a.draw, true, S.types[S.turn]); });
   sock.on('shot', m => { if (S.mode === 'online') playShot(m); });
   sock.on('rematchAsk', () => { $('#overMsg').textContent = 'Opponent wants a rematch!'; });
@@ -548,6 +568,182 @@ function net() {
   return sock;
 }
 addEventListener('pagehide', () => { if (sock && S.mode === 'online') sock.emit('leave'); });
+
+// ---------- build phase (once per match / series): place up to BUILD_MAX blocks on/around your tower + move your archer ----------
+// The plan ({ blocks: grid cells in order, archer: grid spot }) is validated by the same pure validateBuild() the server runs.
+const BS = { side: 0, tool: 'block', plans: [defaultPlan(), defaultPlan()], hist: [[], []], res: [null, null], ghost: null, yaw: 0, online: false, ends: 0, locked: false, sent: false, oppReady: false, m: null, msg: '', err: false, secs: -1 };
+const TX = s => (s ? DIST : -DIST);
+const ghostMats = { ok: noOutline(new THREE.MeshBasicMaterial({ color: 0x5ee05a, transparent: true, opacity: 0.5, depthWrite: false })), bad: noOutline(new THREE.MeshBasicMaterial({ color: 0xff4a3a, transparent: true, opacity: 0.45, depthWrite: false })) };
+const ghost = new THREE.Mesh(new THREE.BoxGeometry(CELL, CELL, CELL), ghostMats.ok);
+ghost.add(new THREE.LineSegments(new THREE.EdgesGeometry(ghost.geometry), noOutline(new THREE.LineBasicMaterial({ color: 0xffffff }))));
+ghost.visible = false; ghost.renderOrder = 5; scene.add(ghost);
+const spotRing = new THREE.Mesh(new THREE.RingGeometry(0.34, 0.46, 28).rotateX(-Math.PI / 2), noOutline(new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.9, depthWrite: false })));
+spotRing.visible = false; spotRing.renderOrder = 5; scene.add(spotRing);
+const buildGrid = new THREE.GridHelper(CELL * 6, 6, 0xffffff, 0xffffff); // the snap grid on the ground around your tower
+buildGrid.material.transparent = true; buildGrid.material.opacity = 0.55; buildGrid.material.depthWrite = false; buildGrid.visible = false; scene.add(buildGrid);
+function withBlock(s, plan, cell) { // add a block; if it lands where the archer stands, the archer climbs on top of it
+  let next = { blocks: [...plan.blocks, cell], archer: plan.archer }, r = validateBuild(s, next), climbed = false;
+  if (!r.ok && r.at < 0) {
+    const up = { blocks: next.blocks, archer: [2 * cell[0] + 1, 2 * cell[1] + 1] }, r2 = validateBuild(s, up);
+    if (r2.ok) { next = up; r = r2; climbed = true; }
+  }
+  return { next, r, climbed };
+}
+function enterBuild(m) {
+  setLooks(m.looks || [loadLook(0), loadLook(1)]);
+  if (m.arenaId !== S.arenaId || !world) setArena(m.arenaId);
+  for (const a of stuck) a.removeFromParent();
+  stuck.length = 0;
+  for (const f of fading) f.o.removeFromParent();
+  fading.length = 0;
+  const st = newRound(Math.random), hot = m.mode === 'hot';
+  Object.assign(S, { mode: m.mode, me: m.me || 0, turn: m.turn || 0, hp: [...st.hp], st, wind: { x: 0, z: 0 }, arenaId: m.arenaId, phase: hot ? 'pass' : 'build', winner: -1, play: null, queue: [], focus: null, draw: 0,
+    best: m.best || 1, score: [...(m.score || [0, 0])], seriesWinner: -1, pending: null, cardT: 0, builds: null });
+  pickupKey = '-'; showPickup(null, false);
+  Object.assign(BS, { side: hot ? 0 : S.me, tool: 'block', plans: [defaultPlan(), defaultPlan()], hist: [[], []], ghost: null, yaw: 0, online: !hot, ends: performance.now() + (m.time || BUILD_TIME) * 1000,
+    locked: false, sent: false, oppReady: false, m, msg: '', err: false, secs: -1 });
+  BS.res = [0, 1].map(i => validateBuild(i, BS.plans[i]));
+  archers.forEach((a, i) => a.pose(0.5, 0, true, 'normal'));
+  ['#home', '#lobby', '#over', '#menu', '#notice', '#help', '#custom', '#hud', '#bottom', '#pip', '#roundCard', '#aimTip'].forEach(x => show(x, false));
+  ['#menuBtn', '#fsGame'].forEach(x => show(x, true));
+  if (!(history.state && history.state.ad3t)) history.pushState({ ad3t: 'game' }, '');
+  show('#restart', hot); $('#homeBtn').textContent = hot ? 'Main menu' : 'Leave room';
+  camJump = true;
+  if (hot) showPass(0); else { show('#build', true); buildMsg('Tap your tower to add a block · drag to turn'); }
+  renderBuild();
+  if (window.__game.autoSkip) setTimeout(() => { if (S.phase === 'pass') $('#passSkip').click(); else if (S.phase === 'build') $('#bSkip').click(); }, 0);
+}
+function endBuildUi() { show('#build', false); show('#pass', false); ghost.visible = false; spotRing.visible = false; buildGrid.visible = false; bdrag = null; }
+function showPass(k) { // hot-seat privacy card: the player who isn't building looks away
+  S.phase = 'pass'; BS.side = k; BS.ghost = null; show('#build', false); renderBuild();
+  const a = nameOf(k), b = nameOf(1 - k);
+  $('#passTitle').textContent = k ? `Pass to ${a}` : 'Build phase';
+  $('#passText').innerHTML = '';
+  $('#passText').append(k ? `${b} is done. ${a}: your turn to build. ${b}, no peeking!` : `${a} builds first: up to ${BUILD_MAX} blocks and a new archer spot. ${b}, look away!`);
+  $('#passGo').textContent = `${a}: build`;
+  show('#passSkip', !k);
+  openPanel('#pass');
+}
+$('#passGo').onclick = () => { show('#pass', false); S.phase = 'build'; BS.yaw = 0; camJump = true; show('#build', true); buildMsg('Tap your tower to add a block · drag to turn'); renderBuild(); };
+$('#passSkip').onclick = () => quickHot(S.arenaId, BS.m.turn); // quick play: no building for either player
+function buildMsg(t, err = false) { BS.msg = t; BS.err = err; const el = $('#bMsg'); el.textContent = t; el.classList.toggle('err', err); }
+function renderBuild() { // 3D: your own build (the other side stays hidden until the match starts)
+  const s = BS.side, vis = [0, 1].map(i => (i === s && S.phase === 'build' ? BS.res[i] : null)), ph = initialPhys(vis);
+  arena.resetBlocks(ph.b); placeArchers(ph.a);
+  const g = BS.ghost;
+  ghost.visible = !!(g && g.pos && S.phase === 'build');
+  if (ghost.visible) { ghost.position.set(...g.pos); ghost.material = g.ok ? ghostMats.ok : ghostMats.bad; }
+  spotRing.visible = S.phase === 'build' && BS.tool === 'archer';
+  buildGrid.visible = S.phase === 'build' && BS.tool === 'block' && !(BS.locked || BS.sent); buildGrid.position.set(TX(s), 0.03, 0);
+  if (spotRing.visible) spotRing.position.set(ph.a[s][0], ph.a[s][1] + 0.03, ph.a[s][2]);
+  renderBuildUi();
+}
+function renderBuildUi() {
+  const s = BS.side, plan = BS.plans[s], left = BUILD_MAX - plan.blocks.length, lock = BS.locked || BS.sent;
+  $('#bTitle').textContent = BS.online ? 'Build your tower' : `${nameOf(s)}: build`;
+  $('#bTitle').style.background = css(cols[s]);
+  $('#bCount').textContent = `▦ ${left}/${BUILD_MAX}`;
+  $('#bUndo').disabled = lock || !BS.hist[s].length;
+  $('#bConfirm').classList.toggle('hidden', !(BS.ghost && BS.ghost.ok) || lock);
+  document.querySelectorAll('#bTool button').forEach(b => { b.classList.toggle('on', b.dataset.tool === BS.tool); b.disabled = lock; });
+  $('#bReady').textContent = BS.online ? (lock ? 'Waiting…' : 'Ready') : s ? 'Fight!' : 'Done';
+  $('#bReady').disabled = lock; $('#bSkip').disabled = lock;
+  $('#bOpp').textContent = BS.online ? (BS.oppReady ? 'Opponent ready ✓' : 'Opponent building…') : '';
+  show('#bOpp', BS.online);
+  if (lock && BS.online) buildMsg(BS.oppReady ? 'Starting…' : 'Locked in. Waiting for your opponent…');
+}
+function setPlan(next, r) { // apply a validated change (undoable); online the server gets every change privately
+  const s = BS.side;
+  BS.hist[s].push(clone(BS.plans[s])); BS.plans[s] = next; BS.res[s] = r; BS.ghost = null;
+  if (BS.online && sock) sock.emit('plan', { plan: next, ready: false });
+  renderBuild();
+}
+function buildTry(cell) {
+  const s = BS.side, plan = BS.plans[s];
+  if (S.phase !== 'build' || BS.locked || BS.sent) return false;
+  if (plan.blocks.length >= BUILD_MAX) { buildMsg('No blocks left (Undo to take one back)', true); return false; }
+  const { next, r, climbed } = withBlock(s, plan, cell);
+  if (!r.ok) { buildMsg(r.at < 0 ? 'That would bury your archer' : r.err, true); return false; }
+  setPlan(next, r); sfx.thunk(); buildMsg(`${climbed ? 'Archer climbed up' : 'Block placed'} · ${BUILD_MAX - next.blocks.length} left`); return true;
+}
+function buildArcherTry(spot) {
+  const s = BS.side, plan = BS.plans[s];
+  if (S.phase !== 'build' || BS.locked || BS.sent) return false;
+  const next = { blocks: plan.blocks, archer: spot }, r = validateBuild(s, next);
+  if (!r.ok) { buildMsg(r.err, true); return false; }
+  setPlan(next, r); buildMsg('Archer moved'); return true;
+}
+function setGhost(cell) {
+  const s = BS.side, plan = BS.plans[s];
+  if (plan.blocks.length >= BUILD_MAX) { BS.ghost = null; buildMsg('No blocks left (Undo to take one back)', true); renderBuild(); return; }
+  const { r, climbed } = withBlock(s, plan, cell);
+  BS.ghost = { cell, ok: r.ok, pos: r.ok ? r.blocks.at(-1) : r.pos || null };
+  buildMsg(r.ok ? (climbed ? 'Archer will stand on it · tap again or Place' : 'Tap again or press Place') : r.at < 0 ? 'That would bury your archer' : r.err, !r.ok);
+  renderBuild();
+}
+const _ray = new THREE.Raycaster(), _ground = new THREE.Plane(new V(0, 1, 0), 0);
+function buildPick(x, y) { // what's under the finger: one of your blocks (point + face normal), else the ground
+  _ray.setFromCamera(new THREE.Vector2(x / innerWidth * 2 - 1, -(y / innerHeight) * 2 + 1), camera);
+  const s = BS.side, meshes = arena.blocks.filter((m, i) => LAYOUT[i].s === s && m.visible), hit = _ray.intersectObjects(meshes, false)[0];
+  if (hit) return { p: hit.point, n: hit.face.normal.clone().transformDirection(hit.object.matrixWorld), block: arena.blocks.indexOf(hit.object) };
+  const p = _ray.ray.intersectPlane(_ground, new V());
+  return p && { p, n: new V(0, 1, 0), block: -1 };
+}
+function buildTap(x, y) {
+  if (BS.locked || BS.sent) return;
+  const pick = buildPick(x, y), s = BS.side;
+  if (!pick) return;
+  const { p, n } = pick;
+  if (BS.tool === 'archer') {
+    if (n.y < 0.5 || p.y < 0.5) { buildMsg('Tap the top of a stone', true); return; }
+    buildArcherTry([Math.round((p.x - TX(s)) / 0.4), Math.round(p.z / 0.4)]); return;
+  }
+  const q = p.clone().addScaledVector(n, 0.2); // top face: the column you tapped; side face: the neighbouring column
+  const cell = [Math.floor((q.x - TX(s)) / CELL), Math.floor(q.z / CELL)], g = BS.ghost;
+  if (g && g.ok && g.cell[0] === cell[0] && g.cell[1] === cell[1]) { buildTry(cell); return; } // second tap on the same spot places it
+  setGhost(cell);
+}
+function buildCam() {
+  const s = BS.side, f = s ? -1 : 1, portrait = camera.aspect < 0.9, R = portrait ? 9 : 8.6;
+  const a = Math.atan2(f * 0.85, 1) + BS.yaw, T = new V(TX(s), portrait ? 3.6 : 4.6, 0);
+  return [T.clone().add(new V(Math.sin(a) * R, portrait ? 7.5 : 5.2, Math.cos(a) * R)), T]; // high 3/4 view so the tower top (where most building happens) is visible
+}
+function buildTick() { // online timer (the server enforces it; this is just the countdown)
+  if (!BS.online) return;
+  const secs = Math.max(0, Math.ceil((BS.ends - performance.now()) / 1000));
+  if (secs === BS.secs) return;
+  BS.secs = secs; $('#bTimer').textContent = `⏱ ${secs}s`; $('#bTimer').classList.toggle('low', secs <= 10);
+  if (secs === 0 && !BS.locked) { BS.locked = true; BS.ghost = null; renderBuild(); buildMsg("Time's up!"); }
+}
+$('#bUndo').onclick = () => {
+  const s = BS.side;
+  if (S.phase !== 'build' || BS.locked || BS.sent || !BS.hist[s].length) return;
+  BS.plans[s] = BS.hist[s].pop(); BS.res[s] = validateBuild(s, BS.plans[s]); BS.ghost = null;
+  if (BS.online && sock) sock.emit('plan', { plan: BS.plans[s], ready: false });
+  buildMsg('Undone'); renderBuild();
+};
+document.querySelectorAll('#bTool button').forEach(b => b.onclick = () => {
+  BS.tool = b.dataset.tool; BS.ghost = null;
+  buildMsg(BS.tool === 'archer' ? 'Tap a stone top to move your archer' : 'Tap your tower to add a block'); renderBuild();
+});
+$('#bConfirm').onclick = () => { if (BS.ghost && BS.ghost.ok) buildTry(BS.ghost.cell); };
+$('#bRot').onclick = () => { BS.yaw += Math.PI / 2; };
+function finishHotBuild(skipMine) {
+  if (skipMine) BS.res[BS.side] = null;
+  if (BS.side === 0) { if (skipMine) BS.plans[0] = defaultPlan(); return showPass(1); }
+  quickHot(S.arenaId, BS.m.turn, [BS.res[0], BS.res[1]]);
+}
+$('#bReady').onclick = () => {
+  if (S.phase !== 'build' || BS.locked || BS.sent) return;
+  if (!BS.online) return finishHotBuild(false);
+  BS.sent = true; BS.ghost = null; sock.emit('plan', { plan: BS.plans[BS.side], ready: true }); renderBuild();
+};
+$('#bSkip').onclick = () => { // quick play: keep the plain tower
+  if (S.phase !== 'build' || BS.locked || BS.sent) return;
+  if (!BS.online) return finishHotBuild(true); // hot-seat: this player keeps the plain tower; the other still gets to build
+  BS.plans[BS.side] = defaultPlan(); BS.res[BS.side] = validateBuild(BS.side, BS.plans[BS.side]); BS.sent = true; BS.ghost = null;
+  sock.emit('plan', { plan: BS.plans[BS.side], ready: true }); renderBuild();
+};
 
 // ---------- HUD ----------
 let flashT = 0, shake = 0;
@@ -593,6 +789,7 @@ const camPos = new V(), camLook = new V();
 let camJump = true;
 function camTarget(t) {
   if (S.phase === 'menu') { const a = t * 0.06 + 1.2; return [new V(Math.cos(a) * 30, 17, Math.sin(a) * 30), new V(0, 4, 0)]; }
+  if (S.phase === 'build' || S.phase === 'pass') return buildCam();
   const v = viewer(), fv = archers[v].f;
   let lead = S.play ? playLead() : null, focus = lead ? lead.m.getWorldPosition(new V()) : S.phase === 'over' ? S.focus : null;
   if (S.play && S.play.focus) focus = S.play.focus;
@@ -664,13 +861,14 @@ function frame() {
   for (let i = fading.length - 1; i >= 0; i--) { const f = fading[i]; f.t -= dt * 0.7; f.o.scale.setScalar(Math.max(0.01, f.t)); if (f.t <= 0) { f.o.removeFromParent(); fading.splice(i, 1); } }
   fpsN++; if (time - fpsT0 >= 1) { S.fps = fpsN / (time - fpsT0); fpsN = 0; fpsT0 = time; }
   if (S.cardT > 0) S.cardT -= dt;
+  if (S.phase === 'build') buildTick();
   if (S.pending && !S.play && S.cardT <= 0) { const p = S.pending; S.pending = null; startMatch(p); }
   if (flashT > 0 && (flashT -= dt) <= 0 && !drag) $('#readout').textContent = '';
   arena.update(dt, time, S.phase === 'menu' ? { x: 1.5, z: 0.5 } : S.wind, camera.position, sfx);
   const [tp, tl] = camTarget(time), k = camJump ? 1 : 1 - Math.exp(-dt * (S.phase === 'fly' ? 10 : 4.5));
   camPos.lerp(tp, k); camLook.lerp(tl, k); camJump = false;
   camera.position.copy(camPos); camera.lookAt(camLook);
-  fadeOccluders(dt);
+  if (S.phase !== 'build') fadeOccluders(dt);
   if (shake > 0.002) { camera.position.add(new V(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(shake)); shake *= Math.exp(-dt * 7); }
   for (let i = floats.length - 1; i >= 0; i--) {
     const f = floats[i]; f.t += dt; f.p.y += dt * 0.7;
@@ -773,7 +971,14 @@ window.__game = {
   get looks() { return looks; }, get cols() { return cols; },
   screenX: i => archers[i].root.position.clone().project(camera).x, // -1..1, left..right
   get world() { return world; },
-  startHot,
+  startHot: quickHot, startHotBuild: startHot, // tests: quickHot skips the build phase
+  autoSkip: false, // tests: skip every build phase straight away
+  get build() { return BS; },
+  buildPlace: (gx, gz) => buildTry([gx, gz]), buildArcher: (ax, az) => buildArcherTry([ax, az]), buildUndo: () => $('#bUndo').click(), buildReady: () => $('#bReady').click(),
+  buildSkip: () => $('#bSkip').click(), passGo: () => $('#passGo').click(),
+  cellScreen(gx, gz) { const s = BS.side, { r } = withBlock(s, BS.plans[s], [gx, gz]); const p = r.ok ? r.blocks.at(-1) : r.pos || [TX(s) + (gx + 0.5) * CELL, 5.4, (gz + 0.5) * CELL]; const q = new V(p[0], p[1] - 0.38, p[2]).project(camera); /* the surface the block would rest on */ return [(q.x + 1) / 2 * innerWidth, (1 - q.y) / 2 * innerHeight]; },
+  pick: (x, y) => { const k = buildPick(x, y); return k && { p: k.p.toArray(), n: k.n.toArray(), block: k.block }; },
+  sendPlan: (plan, ready) => { if (sock) sock.emit('plan', { plan, ready }); },
   simulate: (aim, type = 'normal') => simulateShot(world, S.turn, aim, S.wind, type, S.st),
   setWind: (x, z) => { S.wind = { x, z }; updateHud(); },
   layout: LAYOUT,

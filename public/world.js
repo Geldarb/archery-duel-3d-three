@@ -1,7 +1,7 @@
 // Cartoon castle arena: toon-shaded valley, winding river, stacked-block physics towers, toy castles, tents, trebuchet, clouds, weather.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { LAYOUT } from './sim.js';
+import { LAYOUT, parked } from './sim.js';
 
 // ---------- toon helpers (shared with game.js) ----------
 const grad = (() => { const t = new THREE.DataTexture(new Uint8Array([110, 175, 230, 255]), 4, 1, THREE.RedFormat); t.minFilter = t.magFilter = THREE.NearestFilter; t.needsUpdate = true; return t; })();
@@ -114,7 +114,7 @@ export function buildArena(scene, world, lights) {
   const torches = [], geoCache = {};
   const blockGeo = h => geoCache[h] || (geoCache[h] = new RoundedBoxGeometry(h[0] * 2, h[1] * 2, h[2] * 2, 2, Math.min(0.09, h[1] * 0.4)));
   const shade = (base, k) => new THREE.Color(base).multiplyScalar(0.86 + ((k * 37) % 11) / 11 * 0.16);
-  const kindCol = { wall: T.stone === 0xffffff ? 0xc9ccd6 : new THREE.Color(T.stone).multiplyScalar(0.85).getHex(), slab: 0xb59a76, merlon: 0xdfe2ea };
+  const kindCol = { wall: T.stone === 0xffffff ? 0xc9ccd6 : new THREE.Color(T.stone).multiplyScalar(0.85).getHex(), slab: 0xb59a76, merlon: 0xdfe2ea, build: 0xe2a95a }; // build-phase blocks: warm sandstone, easy to tell apart
   const blocks = LAYOUT.map((l, i) => {
     const m = add(blockGeo(l.half), toon(shade(kindCol[l.kind], i)), ...l.pos);
     if (T.snow && l.kind !== 'wall') add(new RoundedBoxGeometry(l.half[0] * 2 + 0.06, 0.1, l.half[2] * 2 + 0.06, 1, 0.04), snowM, 0, l.half[1] + 0.03, 0, m);
@@ -125,9 +125,10 @@ export function buildArena(scene, world, lights) {
       const flame = add(new THREE.ConeGeometry(0.13, 0.34, 7), noOutline(new THREE.MeshBasicMaterial({ color: 0xffb030 })), 0, 1.1, 0, m);
       torches.push({ flame, ph: Math.random() * 9 });
     }
+    if (l.kind === 'build') m.visible = false;
     return m;
   });
-  function setBlocks(b) { b.forEach((q, i) => { blocks[i].position.set(q[0], q[1], q[2]); blocks[i].quaternion.set(q[3], q[4], q[5], q[6]); }); }
+  function setBlocks(b) { b.forEach((q, i) => { blocks[i].position.set(q[0], q[1], q[2]); blocks[i].quaternion.set(q[3], q[4], q[5], q[6]); blocks[i].visible = !parked(q); }); } // unplaced build blocks stay hidden
   // ---------- effects: chunks, dust, explosions, sparks ----------
   const debris = [], fx = [];
   const chunkGeo = new RoundedBoxGeometry(0.2, 0.16, 0.18, 1, 0.04), puffGeo = new THREE.IcosahedronGeometry(1, 1);
