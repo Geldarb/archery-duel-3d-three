@@ -4,6 +4,7 @@ export const DIST = 15, HP = 100, MAXV = 26, G = 9.8;
 export const WALL_H = 5, SHOULDER = 1.15;                 // tower-top floor height, bow-arm pivot height above the archer's feet
 export const TOWER_HALF = 1.6, WALL_T = 0.8, COURSE_H = 0.92, COURSES = 5, SLAB_H = 0.4, MERLON_S = 0.7;
 export const ARCHER_HALF = [0.28, 0.8, 0.28];              // archer physics box (feet at y - 0.8)
+export const BUILD_MAX = 8, CELL = 0.8, PARK_Y = -40;      // build phase: blocks per player, grid cell (= block size), parked-slot height
 const towerX = s => (s ? DIST : -DIST);
 // Block layout: hollow square shell (5 courses x 6 blocks), 3 floor slabs the archer stands on, 8 merlons. 41 per tower.
 export const LAYOUT = (() => {
@@ -20,11 +21,59 @@ export const LAYOUT = (() => {
     for (const k of [-1, 0, 1]) B(s, 'slab', 0, COURSES * COURSE_H + SLAB_H / 2, k * 3.2 / 3, 3.2, SLAB_H, 3.2 / 3);
     for (const i of [-1, 0, 1]) for (const k of [-1, 0, 1]) if (i || k) B(s, 'merlon', i * 1.25, WALL_H + MERLON_S / 2, k * 1.25, MERLON_S, MERLON_S, MERLON_S);
   }
+  for (const s of [0, 1]) for (let n = 0; n < BUILD_MAX; n++) B(s, 'build', 0, PARK_Y, 0, CELL, CELL, CELL); // build-phase blocks: parked (no body, hidden) until placed
   return L;
 })();
 export const BLOCKS = LAYOUT.length;
+export const parked = q => q[1] < PARK_Y / 2;
 // physics snapshot: b = per block [x,y,z,qx,qy,qz,qw], a = per archer feet position [x,y,z]
-export const initialPhys = () => ({ b: LAYOUT.map(l => [...l.pos, 0, 0, 0, 1]), a: [[-DIST, WALL_H, 0], [DIST, WALL_H, 0]] });
+// builds[s] = validated build-phase result { blocks: [[x,y,z]...], archer: [x,y,z] } (or null = untouched tower)
+export function initialPhys(builds = null) {
+  const b = LAYOUT.map(l => [...l.pos, 0, 0, 0, 1]), a = [[-DIST, WALL_H, 0], [DIST, WALL_H, 0]];
+  if (builds) for (const s of [0, 1]) {
+    const B = builds[s]; if (!B) continue;
+    B.blocks.forEach((p, n) => { b[BUILD_SLOT0[s] + n] = [p[0], p[1], p[2], 0, 0, 0, 1]; });
+    a[s] = [...B.archer];
+  }
+  return { b, a };
+}
+// ---------- build phase (once per match / series): extra blocks + a new archer spot on your own tower ----------
+// Blocks snap to a 0.8 m grid of 6x6 columns around your tower (the 4x4 footprint plus a one-cell ring) and drop onto the highest
+// surface under them. A block must rest with its centre over a stone (or the ground) and stay under the height limit. The archer
+// stands on a 0.4 m grid on top of any stone, centre fully supported. Validation is pure + deterministic (server and both clients).
+export const BUILD_GRID = 3, ARCHER_GRID = 5, BUILD_TOP = WALL_H + 2.4, BUILD_TIME = 60;
+export const BUILD_SLOT0 = [0, 1].map(s => LAYOUT.findIndex(l => l.s === s && l.kind === 'build'));
+export const defaultPlan = () => ({ blocks: [], archer: [0, 0] });
+const box = (p, h) => ({ x0: p[0] - h[0], x1: p[0] + h[0], y1: p[1] + h[1], z0: p[2] - h[2], z1: p[2] + h[2] });
+function surface(boxes, cx, cz, hx, hz) { // highest top under a footprint, and whether the centre point rests on something at that height
+  let top = 0;
+  for (const b of boxes) if (b.x0 < cx + hx && b.x1 > cx - hx && b.z0 < cz + hz && b.z1 > cz - hz) top = Math.max(top, b.y1);
+  const on = top === 0 || boxes.some(b => Math.abs(b.y1 - top) < 1e-6 && cx >= b.x0 - 1e-6 && cx <= b.x1 + 1e-6 && cz >= b.z0 - 1e-6 && cz <= b.z1 + 1e-6);
+  return { top, on };
+}
+const rd = v => Math.round(v * 1e6) / 1e6;
+const isInt = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
+export function validateBuild(s, plan) {
+  const fail = (err, at = -1) => ({ ok: false, err, at });
+  if (!plan || typeof plan !== 'object' || !Array.isArray(plan.blocks)) return fail('Bad plan');
+  if (plan.blocks.length > BUILD_MAX) return fail(`Only ${BUILD_MAX} blocks`);
+  const tx = towerX(s), H = LAYOUT[BUILD_SLOT0[s]].half;
+  const boxes = LAYOUT.filter(l => l.s === s && l.kind !== 'build').map(l => box(l.pos, l.half)), out = [];
+  for (let n = 0; n < plan.blocks.length; n++) {
+    const c = plan.blocks[n];
+    if (!Array.isArray(c) || !isInt(c[0], -BUILD_GRID, BUILD_GRID - 1) || !isInt(c[1], -BUILD_GRID, BUILD_GRID - 1)) return fail('Too far from your tower', n);
+    const x = tx + (c[0] + 0.5) * CELL, z = (c[1] + 0.5) * CELL, sf = surface(boxes, x, z, H[0], H[2]);
+    if (!sf.on) return fail('Nothing to rest on there', n);
+    if (sf.top + CELL > BUILD_TOP + 1e-6) return fail('Too high', n);
+    const p = [rd(x), rd(sf.top + CELL / 2), rd(z)]; out.push(p); boxes.push(box(p, H));
+  }
+  const a = plan.archer || [0, 0];
+  if (!Array.isArray(a) || !isInt(a[0], -ARCHER_GRID, ARCHER_GRID) || !isInt(a[1], -ARCHER_GRID, ARCHER_GRID)) return fail('Archer must stay on your tower');
+  const ax = tx + a[0] * 0.4, az = a[1] * 0.4, sf = surface(boxes, ax, az, ARCHER_HALF[0], ARCHER_HALF[2]);
+  if (!sf.on || sf.top < 0.5) return fail('Archer needs solid stone underfoot');
+  if (sf.top > BUILD_TOP + 1e-6) return fail('Too high');
+  return { ok: true, blocks: out, archer: [rd(ax), rd(sf.top), rd(az)] };
+}
 function inBlock(b, h, p, m = 0.03) { // point inside an oriented box (inverse-rotate by the quaternion)
   const dx = p.x - b[0], dy = p.y - b[1], dz = p.z - b[2], qx = -b[3], qy = -b[4], qz = -b[5], qw = b[6];
   const tx = 2 * (qy * dz - qz * dy), ty = 2 * (qz * dx - qx * dz), tz = 2 * (qx * dy - qy * dx);
@@ -97,7 +146,7 @@ export function launch(i, aim, ap = initialPhys().a[i]) {
 export const PICKUP_R = 1.3;
 function towerBoxes(b) { // loose AABB per side, for a cheap early-out
   const bx = [0, 1].map(() => [1e9, 1e9, 1e9, -1e9, -1e9, -1e9]);
-  b.forEach((q, i) => { const B = bx[LAYOUT[i].s]; for (let k = 0; k < 3; k++) { B[k] = Math.min(B[k], q[k] - 1.2); B[k + 3] = Math.max(B[k + 3], q[k] + 1.2); } });
+  b.forEach((q, i) => { if (parked(q)) return; const B = bx[LAYOUT[i].s]; for (let k = 0; k < 3; k++) { B[k] = Math.min(B[k], q[k] - 1.2); B[k + 3] = Math.max(B[k + 3], q[k] + 1.2); } });
   return bx;
 }
 function collide(world, p, shooter, st, t, tb, pickupTaken) {
@@ -108,7 +157,7 @@ function collide(world, p, shooter, st, t, tb, pickupTaken) {
     if (s === shooter && t < 0.35) continue;
     const B = tb[s];
     if (p.x < B[0] || p.y < B[1] || p.z < B[2] || p.x > B[3] || p.y > B[4] || p.z > B[5]) continue;
-    for (let i = 0; i < BLOCKS; i++) if (LAYOUT[i].s === s && inBlock(st.phys.b[i], LAYOUT[i].half, p)) return { kind: 'block', block: i };
+    for (let i = 0; i < BLOCKS; i++) if (LAYOUT[i].s === s && !parked(st.phys.b[i]) && inBlock(st.phys.b[i], LAYOUT[i].half, p)) return { kind: 'block', block: i };
   }
   if (world.solid(p)) return { kind: 'stone' };
   if (p.y <= world.groundH(p.x, p.z)) return { kind: 'ground' };
@@ -168,7 +217,7 @@ export function finishShot(prev, shooter, type, shot, phys, rand) {
   if (!pickup && !got && --spawnIn <= 0) { pickup = spawnPickup(rand); spawnIn = spawnDelay(rand); }
   return { hp, ammo, pickup, spawnIn, got, phys: phys.phys };
 }
-export const newRound = rand => ({ hp: [HP, HP], phys: initialPhys(), ammo: [emptyAmmo(), emptyAmmo()], pickup: null, spawnIn: spawnDelay(rand) });
+export const newRound = (rand, builds = null) => ({ hp: [HP, HP], phys: initialPhys(builds), ammo: [emptyAmmo(), emptyAmmo()], pickup: null, spawnIn: spawnDelay(rand) });
 export const winnerOf = hp => (hp[0] <= 0 ? 1 : hp[1] <= 0 ? 0 : -1);
 // Series: Single (1), Best of 3 or Best of 5. Returns the series winner or -1.
 export const SERIES = [1, 3, 5];

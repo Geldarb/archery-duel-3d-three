@@ -1,7 +1,7 @@
 // Shared rigid-body tower physics (cannon-es). Runs identically on the server (authoritative) and in the browser (live playback / hot-seat).
 // A run is rebuilt from a snapshot at the start of every shot and driven by a list of timed events derived from the shot's arrows.
 import * as C from 'cannon-es';
-import { LAYOUT, ARROWS, ARCHER_HALF } from './sim.js';
+import { LAYOUT, ARROWS, ARCHER_HALF, parked } from './sim.js';
 
 export const STEP = 1 / 60, SETTLE = 180, MAX_STEPS = 60 * 26;
 const CHAIR_HALF = 0.36, CHAIR_DELAY = 20;
@@ -33,11 +33,12 @@ export class PhysRun {
     w.addContactMaterial(new C.ContactMaterial(sm, sm, { friction: 0.5, restitution: 0.05 }));
     w.addContactMaterial(new C.ContactMaterial(gm, sm, { friction: 0.3, restitution: 0.05 })); // stones slide a bit on the grass
     const ground = new C.Body({ mass: 0, material: gm, shape: new C.Box(new C.Vec3(90, 1, 60)), position: new C.Vec3(0, -1, 0) }); w.addBody(ground);
-    const sleepy = b => { b.material = sm; b.sleepSpeedLimit = 0.25; b.sleepTimeLimit = 0.3; w.addBody(b); b.sleep(); return b; };
-    this.blocks = LAYOUT.map((l, i) => {
+    const sleepy = (b, add = true) => { b.material = sm; b.sleepSpeedLimit = 0.25; b.sleepTimeLimit = 0.3; if (add) w.addBody(b); b.sleep(); return b; };
+    this.blocks = LAYOUT.map((l, i) => { // unused build-phase slots stay parked outside the world
       const s = snap.b[i], b = new C.Body({ mass: 8 * l.half[0] * l.half[1] * l.half[2], shape: new C.Box(v3(l.half)), position: v3(s) });
-      b.quaternion.set(s[3], s[4], s[5], s[6]); b.idx = i; return sleepy(b);
+      b.quaternion.set(s[3], s[4], s[5], s[6]); b.idx = i; return sleepy(b, !parked(s));
     });
+    this.live = this.blocks.filter(b => b.world);
     this.archers = snap.a.map((a, i) => {
       const b = new C.Body({ mass: 3, shape: new C.Box(v3(ARCHER_HALF)), position: new C.Vec3(a[0], a[1] + ARCHER_HALF[1], a[2]), fixedRotation: true, linearDamping: 0.05 });
       b.who = i; sleepy(b);
@@ -58,14 +59,14 @@ export class PhysRun {
     const a = this.archers[i].position;
     if (other.velocity.y < -2 && other.position.y > a.y + 0.25) { this.debris[i].add(other.idx); this.hurt(i, 4, 'debris', this.feet(i)); }
   }
-  wakeNear(p, r = 7) { for (const b of [...this.blocks, ...this.archers]) if (b.position.distanceTo(p) < r) b.wakeUp(); }
+  wakeNear(p, r = 7) { for (const b of [...this.live, ...this.archers]) if (b.position.distanceTo(p) < r) b.wakeUp(); }
   apply(e) {
     const p = v3(e.p);
     this.wakeNear(p);
     if (e.kind === 'hit') { // shove at the block's mid-height so it slides out (tablecloth-style) instead of digging in
       const b = this.blocks[e.i]; b.applyImpulse(v3(e.j), new C.Vec3(0, 0, 0)); this.fx.push({ k: this.k, kind: 'hit', i: e.i, p: e.p }); }
     else if (e.kind === 'blast') {
-      for (const b of [...this.blocks, ...this.archers]) {
+      for (const b of [...this.live, ...this.archers]) {
         const d = b.position.vsub(p), dist = d.length();
         if (dist >= e.R) continue;
         const f = 1 - dist / e.R; d.y += 0.6; d.normalize();
@@ -90,7 +91,7 @@ export class PhysRun {
     if (!S || this.k < S.start || this.k >= S.end) { if (S && this.k === S.end) { c.angularVelocity.set(0, 0, 0); c.allowSleep = true; } return; }
     c.quaternion.set(0, c.quaternion.y, 0, c.quaternion.w).normalize(); c.angularVelocity.set(0, 24, 0); c.wakeUp();
     const cp = c.position;
-    for (const b of [...this.blocks, ...this.archers]) {
+    for (const b of [...this.live, ...this.archers]) {
       const dx = b.position.x - cp.x, dz = b.position.z - cp.z, h = Math.hypot(dx, dz);
       if (h > W.radius + 0.6 || Math.abs(b.position.y - cp.y) > 1.4 || h < 1e-3) continue;
       b.wakeUp(); const dv = b.who !== undefined ? 0.015 : 0.15; // gentle steady shove, adds up over the 3 s spin
@@ -120,7 +121,7 @@ export class PhysRun {
     this.world.step(STEP);
     this.falls();
     this.k++;
-    const still = this.blocks.every(b => b.sleepState === C.Body.SLEEPING) && this.archers.every(b => b.sleepState === C.Body.SLEEPING);
+    const still = this.live.every(b => b.sleepState === C.Body.SLEEPING) && this.archers.every(b => b.sleepState === C.Body.SLEEPING);
     if ((this.k > this.lastK && this.ei >= this.ev.length && still && (!this.spin || this.k >= this.spin.end)) || this.k >= this.lastK + SETTLE || this.k >= MAX_STEPS) this.done = true;
     return !this.done;
   }
