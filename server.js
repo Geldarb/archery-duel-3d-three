@@ -4,13 +4,14 @@ const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
 
-const BUILD = 'ad3t-v4.5';
+const BUILD = 'ad3t-v5';
 const app = express();
 app.get('/health', (req, res) => res.json({ ok: true, build: BUILD, rooms: rooms.size }));
 const fs = require('fs');
 const SW = fs.readFileSync(path.join(__dirname, 'public/sw.js'), 'utf8').replace('__BUILD__', BUILD); // cache name = build, so deploys never serve stale files
 app.get('/sw.js', (req, res) => res.set({ 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', 'Service-Worker-Allowed': '/' }).send(SW));
 app.get(['/', '/index.html'], (req, res, next) => { res.set('Cache-Control', 'no-cache'); next(); });
+app.get('/vendor/cannon-es.js', (req, res) => res.sendFile(path.join(__dirname, 'node_modules/cannon-es/dist/cannon-es.js')));
 app.use('/vendor/jsm', express.static(path.join(__dirname, 'node_modules/three/examples/jsm')));
 app.use('/vendor', express.static(path.join(__dirname, 'node_modules/three/build')));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -20,11 +21,12 @@ const rooms = new Map();
 const CH = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const clamp = (v, a, b) => Math.min(b, Math.max(a, Number(v) || 0));
 
-Promise.all([import('./public/sim.js'), import('./public/looks.js')]).then(([sim, looks]) => {
-  const start = r => { // one round; HP and merlons reset, arena and score kept
+Promise.all([import('./public/sim.js'), import('./public/looks.js'), import('./public/physics.js')]).then(([sim, looks, phys]) => {
+  const start = r => { // one round; HP, towers (every block) and power-ups reset, arena and score kept
     clearTimeout(r.timer);
-    Object.assign(r, { hp: [sim.HP, sim.HP], merlons: sim.fullMerlons(), winner: -1, wind: sim.randomWind(), votes: new Set() });
-    r.socks.forEach((s, i) => s.emit('start', { arena: r.arena, you: i, hp: r.hp, merlons: r.merlons, turn: r.turn, wind: r.wind, looks: r.looks, best: r.best, score: r.score }));
+    r.rand = sim.rng(Math.floor(Math.random() * 2 ** 32)); // seeded per round: power-up timing / position / kind
+    Object.assign(r, { st: sim.newRound(r.rand), winner: -1, wind: sim.randomWind(), votes: new Set(), busy: 0 });
+    r.socks.forEach((s, i) => s.emit('start', { arena: r.arena, you: i, st: r.st, turn: r.turn, wind: r.wind, looks: r.looks, best: r.best, score: r.score }));
   };
   const newSeries = r => { r.score = [0, 0]; r.seriesWinner = -1; start(r); };
   const leave = sock => {
@@ -57,17 +59,22 @@ Promise.all([import('./public/sim.js'), import('./public/looks.js')]).then(([sim
     });
     sock.on('shoot', ({ aim = {}, type } = {}) => {
       const r = sock.data.room, i = sock.data.idx;
-      if (!r || !r.socks[1] || r.winner >= 0 || r.turn !== i) return; // only the active player may shoot
+      if (!r || !r.socks[1] || r.winner >= 0 || r.turn !== i || Date.now() < r.busy) return; // only the active player, once the last shot has settled
       const a = { pitch: clamp(aim.pitch, 0, 1.3), power: clamp(aim.power, 0.1, 1) }; // any client yaw is dropped
-      const shot = sim.simulateShot(r.world, i, a, r.wind, type, r.merlons);
-      ({ hp: r.hp, merlons: r.merlons } = sim.applyShot(r.hp, r.merlons, shot)); // server tracks HP and destroyed merlons
-      r.winner = sim.winnerOf(r.hp);
+      if (!sim.ARROWS[type] || (sim.ARROWS[type].special && !(r.st.ammo[i][type] > 0))) type = 'normal'; // specials only if earned
+      const shot = sim.simulateShot(r.world, i, a, r.wind, type, r.st);
+      const res = phys.resolvePhysics(r.st.phys, shot); // authoritative: blocks, falls, debris, blasts, wheelchair spin
+      const next = sim.finishShot(r.st, i, shot.type, shot, res, r.rand);
+      r.st = { hp: next.hp, phys: next.phys, ammo: next.ammo, pickup: next.pickup, spawnIn: next.spawnIn };
+      const dur = Math.max(...shot.arrows.map(x => x.res.t), res.steps * phys.STEP);
+      r.busy = Date.now() + dur * 1000 * 0.6;
+      r.winner = sim.winnerOf(r.st.hp);
       r.turn = 1 - i; r.wind = sim.randomWind();
       if (r.winner >= 0) { // round over: score it; next round after the clients have played the shot back (loser shoots first)
         r.score[r.winner]++; r.seriesWinner = sim.seriesWinnerOf(r.score, r.best); r.turn = 1 - r.winner;
-        if (r.seriesWinner < 0) r.timer = setTimeout(() => { if (rooms.get(r.code) === r) start(r); }, (Math.max(...shot.arrows.map(x => x.res.t)) + 4) * 1000);
+        if (r.seriesWinner < 0) r.timer = setTimeout(() => { if (rooms.get(r.code) === r) start(r); }, (dur + 4) * 1000);
       }
-      io.to(r.code).emit('shot', { shooter: i, aim: a, sim: shot, hp: r.hp, merlons: r.merlons, turn: r.turn, wind: r.wind, winner: r.winner, score: r.score, seriesWinner: r.seriesWinner });
+      io.to(r.code).emit('shot', { shooter: i, aim: a, sim: shot, st: r.st, dmg: res.dmg, log: res.log, steps: res.steps, got: next.got, turn: r.turn, wind: r.wind, winner: r.winner, score: r.score, seriesWinner: r.seriesWinner });
     });
     sock.on('rematch', () => {
       const r = sock.data.room;

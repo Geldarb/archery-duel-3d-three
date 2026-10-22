@@ -1,32 +1,48 @@
 // Shared, dependency-free simulation: used by the browser (hot-seat) and the server (online rooms).
 export const DIST = 15, HP = 100, MAXV = 26, G = 9.8;
-// Each archer stands in the middle of a round tower top (centre x = -DIST for Blue, +DIST for Red).
-export const WALL_H = 5, TOWER_R = 2.7, RING_IN = 2.05;   // tower height and radii of the low ring wall
-export const BREAST = 0.75, MERLON_H = 0.8;               // ring-wall height, merlon height above it
-export const MERLON_R = 2.38, MERLON_HALF = 0.36;         // merlon centre radius and half-width
-export const MERLON_ANG = [-75, -50, -25, 0, 25, 50, 75]; // destructible merlons (degrees from the facing direction); 0 = in the line of fire
-export const STATIC_ANG = [-100, 100];                    // decorative, indestructible
-export const MERLON_HP = 2;                               // 1st hit cracks it, 2nd knocks it off (heavy arrows knock off at once)
-export const MERLONS = 2 * MERLON_ANG.length;
-export const SHOULDER = 1.15;                             // bow-arm pivot height above the tower floor
+// Each archer stands on top of a square tower built from loose stone blocks (every block is a rigid body, see physics.js).
+export const WALL_H = 5, SHOULDER = 1.15;                 // tower-top floor height, bow-arm pivot height above the archer's feet
+export const TOWER_HALF = 1.6, WALL_T = 0.8, COURSE_H = 0.92, COURSES = 5, SLAB_H = 0.4, MERLON_S = 0.7;
+export const ARCHER_HALF = [0.28, 0.8, 0.28];              // archer physics box (feet at y - 0.8)
 const towerX = s => (s ? DIST : -DIST);
-// World placement of merlon id (side = floor(id / n)): centre and outward angle (atan2(z, x) around the tower centre)
-export function merlonGeom(id, list = MERLON_ANG) {
-  const n = list.length, s = Math.floor(id / n), deg = list[id % n];
-  const ang = (s ? Math.PI : 0) + (s ? -1 : 1) * deg * Math.PI / 180, cx = towerX(s);
-  return { s, ang, cx, x: cx + MERLON_R * Math.cos(ang), z: MERLON_R * Math.sin(ang) };
+// Block layout: hollow square shell (5 courses x 6 blocks), 3 floor slabs the archer stands on, 8 merlons. 41 per tower.
+export const LAYOUT = (() => {
+  const L = [], o = TOWER_HALF - WALL_T / 2, g = 0.012; // lateral gap so resting blocks never overlap
+  const B = (s, kind, x, y, z, sx, sy, sz) => L.push({ s, kind, pos: [towerX(s) + x, y, z], half: [sx / 2 - g, sy / 2, sz / 2 - g] });
+  for (const s of [0, 1]) {
+    for (let c = 0; c < COURSES; c++) {
+      const y = c * COURSE_H + COURSE_H / 2;
+      for (const sg of [-1, 1]) { // facing walls (toward / away from the enemy) sit between the side walls, so a push drops them inward
+        B(s, 'wall', sg * o, y, 0, WALL_T, COURSE_H, 1.5);
+        for (const k of [-1, 1]) B(s, 'wall', k * 0.8, y, sg * o, 1.6, COURSE_H, WALL_T);
+      }
+    }
+    for (const k of [-1, 0, 1]) B(s, 'slab', 0, COURSES * COURSE_H + SLAB_H / 2, k * 3.2 / 3, 3.2, SLAB_H, 3.2 / 3);
+    for (const i of [-1, 0, 1]) for (const k of [-1, 0, 1]) if (i || k) B(s, 'merlon', i * 1.25, WALL_H + MERLON_S / 2, k * 1.25, MERLON_S, MERLON_S, MERLON_S);
+  }
+  return L;
+})();
+export const BLOCKS = LAYOUT.length;
+// physics snapshot: b = per block [x,y,z,qx,qy,qz,qw], a = per archer feet position [x,y,z]
+export const initialPhys = () => ({ b: LAYOUT.map(l => [...l.pos, 0, 0, 0, 1]), a: [[-DIST, WALL_H, 0], [DIST, WALL_H, 0]] });
+function inBlock(b, h, p, m = 0.03) { // point inside an oriented box (inverse-rotate by the quaternion)
+  const dx = p.x - b[0], dy = p.y - b[1], dz = p.z - b[2], qx = -b[3], qy = -b[4], qz = -b[5], qw = b[6];
+  const tx = 2 * (qy * dz - qz * dy), ty = 2 * (qz * dx - qx * dz), tz = 2 * (qx * dy - qy * dx);
+  const lx = dx + qw * tx + (qy * tz - qz * ty), ly = dy + qw * ty + (qz * tx - qx * tz), lz = dz + qw * tz + (qx * ty - qy * tx);
+  return Math.abs(lx) < h[0] + m && Math.abs(ly) < h[1] + m && Math.abs(lz) < h[2] + m;
 }
-function inMerlon(g, p) { // box in the tower's radial frame
-  const dx = p.x - g.cx, dz = p.z, c = Math.cos(g.ang), sn = Math.sin(g.ang);
-  const rad = dx * c + dz * sn, tan = -dx * sn + dz * c;
-  return Math.abs(rad - MERLON_R) < 0.3 && Math.abs(tan) < MERLON_HALF && p.y >= WALL_H + BREAST && p.y < WALL_H + BREAST + MERLON_H;
-}
-export const STATIC_GEOM = [0, 1, 2, 3].map(i => merlonGeom(i, STATIC_ANG));
+// Projectiles. push = impulse given to a stone block on impact (Heavy strongest, Split lightest, per arrow).
+// Specials come from sky power-ups; `land` says what happens on impact (handled in physics.js). Add new specials here + a LANDING handler.
 export const ARROWS = {
-  normal: { name: 'Normal', dmg: [25, 50], stone: 1, g: 1, wind: 1 },
-  heavy: { name: 'Heavy', dmg: [35, 70], stone: 2, g: 1.4, wind: 0.4 },
-  split: { name: 'Split', dmg: [15, 30], stone: 1, g: 1, wind: 1, split: true },
+  normal: { name: 'Normal', dmg: [25, 50], push: 14, g: 1, wind: 1 },
+  heavy: { name: 'Heavy', dmg: [35, 70], push: 30, g: 1.4, wind: 0.4 },
+  split: { name: 'Split', dmg: [15, 30], push: 6, g: 1, wind: 1, split: true },
+  bomb: { name: 'Bomb', dmg: [0, 0], push: 0, g: 1.3, wind: 0.3, special: true, land: 'blast', radius: 3.2, power: 34, blastDmg: 38 },
+  wheelchair: { name: 'Wheelchair', dmg: [10, 15], push: 6, g: 1.25, wind: 0.5, special: true, land: 'spin', spin: 3, radius: 1.7, tick: 5, ticks: 6 },
 };
+export const SPECIALS = Object.keys(ARROWS).filter(k => ARROWS[k].special);
+export const BASIC = Object.keys(ARROWS).filter(k => !ARROWS[k].special);
+export const emptyAmmo = () => Object.fromEntries(SPECIALS.map(k => [k, 0]));
 // Three cartoon variants. riverX/slope/riverPh shape the winding river; trees [x, z, size]; tents [x, z, r, h]; treb [x, z]; rocks [x, z, r].
 export const ARENAS = {
   field: { name: 'Sunny Field', amp: 0.35, wallZ: 15, riverX: 0, slope: -0.8, riverPh: 0,
@@ -57,12 +73,6 @@ export function makeWorld(id) {
   const rocks = A.rocks.map(([x, z, r]) => ({ x, z, r, y: groundH(x, z) }));
   const treb = { x: A.treb[0], z: A.treb[1], y: groundH(A.treb[0], A.treb[1]) };
   const solid = p => {
-    for (const s of [0, 1]) { // round towers and their ring walls
-      const r = Math.hypot(p.x - towerX(s), p.z);
-      if (r < TOWER_R && p.y < WALL_H) return true;
-      if (r > RING_IN && r < TOWER_R && p.y < WALL_H + BREAST) return true;
-    }
-    if (STATIC_GEOM.some(g => inMerlon(g, p))) return true;
     for (const t of tr) { const ly = p.y - t.y; if (ly > 0 && ((ly < 1.6 * t.s && Math.hypot(p.x - t.x, p.z - t.z) < 0.22 * t.s) || Math.hypot(p.x - t.x, ly - 2.5 * t.s, p.z - t.z) < 1.15 * t.s)) return true; }
     for (const t of tents) { const ly = p.y - t.y, r = Math.hypot(p.x - t.x, p.z - t.z); if (ly > 0 && ly < t.h && r < (ly < t.h * 0.45 ? t.r : t.r * (1 - (ly - t.h * 0.45) / (t.h * 0.55)))) return true; }
     for (const k of rocks) if (Math.hypot(p.x - k.x, p.y - k.y, p.z - k.z) < k.r) return true;
@@ -71,35 +81,46 @@ export function makeWorld(id) {
   return { id: ARENAS[id] ? id : 'field', A, groundH, riverX, trees: tr, tents, rocks, treb, solid };
 }
 
-export function archerHit(i, p) { // chunky, big-headed archer standing at the tower centre
-  const bx = towerX(i), r2d = (p.x - bx) ** 2 + p.z ** 2, y = p.y - WALL_H;
+export function archerHit(ap, p) { // chunky, big-headed archer whose feet are at ap = [x, y, z]
+  const r2d = (p.x - ap[0]) ** 2 + (p.z - ap[2]) ** 2, y = p.y - ap[1];
   if ((y - 1.55) ** 2 + r2d < 0.36 ** 2) return 'head';
   if (y > 0 && y < 1.25 && r2d < 0.34 ** 2) return 'body';
   return null;
 }
-// aim: { pitch, power 0..1 }. No sideways aim: every shot flies straight down the lane at the opponent (z = 0).
-export function launch(i, aim) {
+// aim: { pitch, power 0..1 }. No sideways aim: every shot flies straight down the lane (z = 0). Launch from wherever the archer now stands.
+export function launch(i, aim, ap = initialPhys().a[i]) {
   const f = i ? -1 : 1, cp = Math.cos(aim.pitch);
   const d = { x: f * cp, y: Math.sin(aim.pitch), z: 0 };
   const v = MAXV * aim.power;
-  return { pos: { x: -f * DIST + d.x * 0.9, y: WALL_H + SHOULDER + d.y * 0.9, z: d.z * 0.9 }, vel: { x: d.x * v, y: d.y * v, z: d.z * v } };
+  return { pos: { x: ap[0] + d.x * 0.9, y: ap[1] + SHOULDER + d.y * 0.9, z: ap[2] + d.z * 0.9 }, vel: { x: d.x * v, y: d.y * v, z: d.z * v } };
 }
-function collide(world, p, shooter, merlons) {
-  for (let i = 0; i < 2; i++) if (i !== shooter) { const part = archerHit(i, p); if (part) return { kind: part, who: i }; }
-  for (let m = 0; m < MERLONS; m++) { // own merlons are ignored: you shoot over your own parapet
-    const g = merlonGeom(m);
-    if (g.s !== shooter && merlons[m] > 0 && inMerlon(g, p)) return { kind: 'merlon', merlon: m };
+export const PICKUP_R = 1.3;
+function towerBoxes(b) { // loose AABB per side, for a cheap early-out
+  const bx = [0, 1].map(() => [1e9, 1e9, 1e9, -1e9, -1e9, -1e9]);
+  b.forEach((q, i) => { const B = bx[LAYOUT[i].s]; for (let k = 0; k < 3; k++) { B[k] = Math.min(B[k], q[k] - 1.2); B[k + 3] = Math.max(B[k + 3], q[k] + 1.2); } });
+  return bx;
+}
+function collide(world, p, shooter, st, t, tb, pickupTaken) {
+  const a = st.phys.a;
+  for (let i = 0; i < 2; i++) if (i !== shooter) { const part = archerHit(a[i], p); if (part) return { kind: part, who: i }; }
+  if (st.pickup && !pickupTaken && Math.hypot(p.x - st.pickup.pos[0], p.y - st.pickup.pos[1], p.z - st.pickup.pos[2]) < PICKUP_R) return { kind: 'pickup', pickup: st.pickup.kind };
+  for (let s = 0; s < 2; s++) { // own tower blocks are ignored right after release (you shoot over your own parapet)
+    if (s === shooter && t < 0.35) continue;
+    const B = tb[s];
+    if (p.x < B[0] || p.y < B[1] || p.z < B[2] || p.x > B[3] || p.y > B[4] || p.z > B[5]) continue;
+    for (let i = 0; i < BLOCKS; i++) if (LAYOUT[i].s === s && inBlock(st.phys.b[i], LAYOUT[i].half, p)) return { kind: 'block', block: i };
   }
   if (world.solid(p)) return { kind: 'stone' };
   if (p.y <= world.groundH(p.x, p.z)) return { kind: 'ground' };
   if (Math.abs(p.x) > 85 || Math.abs(p.z) > 55 || p.y < -5) return { kind: 'out' };
   return null;
 }
-// Returns { type, arrows: [{ t0, pts: [[x,y,z] every 1/60 s], res: { kind, who?, merlon?, dmg, pos, dir, t } }] }
-export function simulateShot(world, shooter, aim, wind, type = 'normal', merlons = fullMerlons()) {
-  const T = ARROWS[type] || ARROWS.normal, DT = 1 / 240, out = [];
-  const { pos, vel } = launch(shooter, aim);
+// st = { phys: { b, a }, pickup }. Returns { type, arrows: [{ t0, pts: [[x,y,z] every 1/60 s], res: { kind, who?, block?, pickup?, dmg, pos, dir, t } }] }
+export function simulateShot(world, shooter, aim, wind, type = 'normal', st = { phys: initialPhys(), pickup: null }) {
+  const T = ARROWS[type] || ARROWS.normal, DT = 1 / 240, out = [], tb = towerBoxes(st.phys.b);
+  const { pos, vel } = launch(shooter, aim, st.phys.a[shooter]);
   const queue = [{ t0: 0, p: pos, v: vel, child: false }];
+  let taken = false;
   while (queue.length) {
     const a = queue.shift(), p = a.p, v = a.v, pts = [[r2(p.x), r2(p.y), r2(p.z)]];
     let t = a.t0, res = null;
@@ -114,29 +135,40 @@ export function simulateShot(world, shooter, aim, wind, type = 'normal', merlons
           queue.push({ t0: t, p: { ...p }, v: { x: sx * (h * c - v.y * sn), y: h * sn + v.y * c, z: v.z }, child: true });
         }
       }
-      const hit = collide(world, p, shooter, merlons);
+      const hit = collide(world, p, shooter, st, t, tb, taken);
       if (hit) {
+        if (hit.kind === 'pickup') taken = true;
         const sp = Math.hypot(v.x, v.y, v.z);
-        res = { ...hit, dmg: hit.who !== undefined ? T.dmg[hit.kind === 'head' ? 1 : 0] : hit.kind === 'merlon' ? T.stone : 0,
-          pos: [r2(p.x), r2(p.y), r2(p.z)], dir: [v.x / sp, v.y / sp, v.z / sp].map(r2), t: r2(t) };
+        res = { ...hit, dmg: hit.who !== undefined ? T.dmg[hit.kind === 'head' ? 1 : 0] : 0,
+          pos: [r2(p.x), r2(p.y), r2(p.z)], dir: [v.x / sp, v.y / sp, v.z / sp].map(r2), speed: r2(sp), t: r2(t) };
         pts.push(res.pos);
       } else if (n % 4 === 0) pts.push([r2(p.x), r2(p.y), r2(p.z)]);
     }
-    out.push({ t0: r2(a.t0), pts, res: res || { kind: 'out', dmg: 0, pos: pts[pts.length - 1], dir: [1, 0, 0], t: r2(t) } });
+    out.push({ t0: r2(a.t0), pts, res: res || { kind: 'out', dmg: 0, pos: pts[pts.length - 1], dir: [1, 0, 0], speed: 0, t: r2(t) } });
   }
   return { type: ARROWS[type] ? type : 'normal', arrows: out };
 }
-export const fullMerlons = () => Array(MERLONS).fill(MERLON_HP);
-// Apply one arrow result to { hp, merlons } (used per arrow for animation, and for the whole shot)
-export function applyResult(state, res) {
-  if (res.who !== undefined) state.hp[res.who] = Math.max(0, state.hp[res.who] - res.dmg);
-  if (res.merlon !== undefined) state.merlons[res.merlon] = Math.max(0, state.merlons[res.merlon] - res.dmg);
+// ---------- sky power-ups ----------
+// Every 2-4 turns (max one at a time) a power-up floats in the sky between the towers; hitting it grants a special for your next shots.
+export function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+export const spawnDelay = rand => 2 + Math.floor(rand() * 3);
+export function spawnPickup(rand) {
+  return { kind: SPECIALS[Math.floor(rand() * SPECIALS.length)], pos: [r2((rand() * 2 - 1) * 6), r2(7 + rand() * 5), 0] };
 }
-export function applyShot(hp, merlons, shot) {
-  const s = { hp: [...hp], merlons: [...merlons] };
-  for (const a of shot.arrows) applyResult(s, a.res);
-  return s;
+// Combine a shot's arrow results with its physics result (falls, debris, blasts, spins) into the next round state. Used by server and hot-seat.
+export function finishShot(prev, shooter, type, shot, phys, rand) {
+  const hp = [...prev.hp], ammo = prev.ammo.map(a => ({ ...a }));
+  let pickup = prev.pickup, spawnIn = prev.spawnIn, got = null;
+  if (ARROWS[type] && ARROWS[type].special) ammo[shooter][type] = Math.max(0, ammo[shooter][type] - 1);
+  for (const a of shot.arrows) {
+    if (a.res.who !== undefined) hp[a.res.who] = Math.max(0, hp[a.res.who] - a.res.dmg);
+    if (a.res.kind === 'pickup' && pickup && !got) { got = pickup.kind; ammo[shooter][got]++; pickup = null; spawnIn = spawnDelay(rand); }
+  }
+  for (const i of [0, 1]) hp[i] = Math.max(0, hp[i] - (phys.dmg[i] || 0));
+  if (!pickup && !got && --spawnIn <= 0) { pickup = spawnPickup(rand); spawnIn = spawnDelay(rand); }
+  return { hp, ammo, pickup, spawnIn, got, phys: phys.phys };
 }
+export const newRound = rand => ({ hp: [HP, HP], phys: initialPhys(), ammo: [emptyAmmo(), emptyAmmo()], pickup: null, spawnIn: spawnDelay(rand) });
 export const winnerOf = hp => (hp[0] <= 0 ? 1 : hp[1] <= 0 ? 0 : -1);
 // Series: Single (1), Best of 3 or Best of 5. Returns the series winner or -1.
 export const SERIES = [1, 3, 5];
