@@ -29,9 +29,11 @@ const dropped = (before, after) => before.filter(([i, y], k) => y - after[k][1] 
 const moved = (a, b) => a.filter((p, i) => Math.hypot(p[0] - b[i][0], p[1] - b[i][1], p[2] - b[i][2]) > 0.3).length;
 async function watchShot(pg, shot, when, path, minFps) { // fire, then screenshot once when() is true in the page; track the FPS while it plays
   await shot();
-  let shotTaken = false, fps = 99;
-  for (let t = 0; t < 600; t++) {
+  let shotTaken = false, fps = 99, started = false;
+  for (let t = 0; t < 800; t++) {
     const [w, playing, f] = await pg.evaluate(`[(${when})(), !!__game.S.play, __game.S.fps || 99]`);
+    if (playing) started = true;
+    if (!started && t < 250) { await sleep(80); continue; } // wait for the (network-delayed) shot to start playing
     if (t > 8) fps = Math.min(fps, f);
     if (w && !shotTaken && path) { await sleep(120); await pg.screenshot({ captureBeyondViewport: false, path }); shotTaken = true; }
     if (!playing && t > 3) break;
@@ -157,7 +159,7 @@ if (which !== 'hot') {
         return (k === 'wheelchair' && chairAim(opp)) || __game.findLanding(r => Math.hypot(r.pos[0] - a[0], r.pos[1] - a[1], r.pos[2] - a[2]) < 2.5, k)
           || __game.findLanding(r => r.kind === 'block' && __game.layout[r.block].s === opp && r.pos[1] > 2.5, k) || __game.findLanding(r => r.kind === 'block' && __game.layout[r.block].s === opp, k) || __game.findLanding(r => r.kind === 'ground' && Math.abs(r.pos[0] - a[0]) < 3, k); }, k);
       assert(aim, `online: aim for ${k}`);
-      const cond = k === 'bomb' ? `() => __game.blasted()` : `() => __game.spinning() && __game.S.play.run.k > __game.S.play.run.spin.start + 40`;
+      const cond = k === 'bomb' ? `() => __game.blasted()` : `() => __game.spinning() && __game.S.play.run.k > __game.S.play.run.spin.start + 12`;
       const before = await A.evaluate(() => __game.blocks());
       const wo = watchShot(O, async () => {}, cond, `${out}/${pre}-online-${s.turn === 0 ? 'B-740x360' : 'A-360x640'}-${k}.png`);
       const wp = watchShot(P, () => P.evaluate((a, k) => __game.shootAim(a, k), aim.aim, k), cond, `${out}/${pre}-online-${tagP}-${k}.png`);
