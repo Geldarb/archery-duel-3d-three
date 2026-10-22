@@ -288,6 +288,7 @@ function net() {
   sock.on('disconnect', () => notice('Connection lost'));
   return sock;
 }
+addEventListener('pagehide', () => { if (sock && S.mode === 'online') sock.emit('leave'); });
 
 // ---------- HUD ----------
 let flashT = 0, shake = 0;

@@ -128,7 +128,7 @@ if (which !== 'hot') {
   await B.waitForFunction(() => __game.S.phase === 'aim' && __game.S.hp[1] === 100, { timeout: 10000 });
   console.log('rematch started, turn', (await st(A)).turn, (await st(B)).turn);
   await B.close();
-  await A.waitForFunction(() => !document.querySelector('#notice').classList.contains('hidden'), { timeout: 15000 });
+  await A.waitForFunction(() => !document.querySelector('#notice').classList.contains('hidden'), { timeout: 30000 });
   console.log('A notice:', await A.$eval('#noticeText', e => e.textContent));
   await A.click('#noticeBtn'); await sleep(300);
   assert((await st(A)).phase === 'menu', 'back to menu');

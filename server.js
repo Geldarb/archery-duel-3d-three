@@ -10,7 +10,7 @@ app.get('/health', (req, res) => res.json({ ok: true, build: BUILD, rooms: rooms
 app.use('/vendor', express.static(path.join(__dirname, 'node_modules/three/build')));
 app.use(express.static(path.join(__dirname, 'public')));
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, { pingInterval: 10000, pingTimeout: 8000 }); // notice dropped players quickly
 const rooms = new Map();
 const CH = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const clamp = (v, a, b) => Math.min(b, Math.max(a, Number(v) || 0));
