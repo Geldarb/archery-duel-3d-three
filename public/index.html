@@ -3,10 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="build" content="ad3t-v4.4">
+<meta name="build" content="ad3t-v4.5">
+<meta name="color-scheme" content="only light">
+<meta name="theme-color" content="#2f6fe0">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Archery Duel">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <title>Archery Duel: Castle Siege</title>
 <link rel="preload" href="fonts/Fredoka-700.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Ctext y=%2214%22 font-size=%2214%22%3E%F0%9F%8F%B9%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="/icons/icon-192.png" sizes="192x192">
 <link rel="stylesheet" href="style.css">
 <script src="/socket.io/socket.io.min.js"></script>
 <script type="importmap">{ "imports": { "three": "/vendor/three.module.js", "three/addons/": "/vendor/jsm/" } }</script>
@@ -18,6 +26,7 @@
   <div class="hp" id="hp1"><em class="you hidden">you</em><div class="bar"><i></i><b class="num">100</b></div><svg class="shield" viewBox="0 0 40 46"><path d="M20 2 37 8v14c0 12-8 19-17 22C11 41 3 34 3 22V8z" fill="#e0342c" stroke="#ffd23f" stroke-width="3.5" stroke-linejoin="round"/><path d="M10.5 27 12 15l4.5 5L20 12l3.5 8 4.5-5 1.5 12z" fill="#ffd23f" stroke="#7a4b00" stroke-width="1.6" stroke-linejoin="round"/></svg></div>
 </div>
 <button id="menuBtn" class="hidden" aria-label="Menu">☰</button>
+<button id="fsGame" class="fsBtn icon hidden" aria-label="Full screen"><svg class="fsIn" viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg><svg class="fsOut" viewBox="0 0 24 24"><path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/></svg></button>
 <div id="pip" class="hidden"><span></span></div>
 <div id="roundCard" class="hidden"><b></b><span></span></div>
 <div id="bottom" class="hidden">
@@ -30,38 +39,55 @@
 </div>
 
 <div id="home" class="panel">
-  <h1>Archery Duel</h1>
-  <div class="sub">Castle Siege</div>
-  <div class="chips" id="seriesBtns"><button data-s="1" class="on">Single</button><button data-s="3">Best of 3</button><button data-s="5">Best of 5</button></div>
-  <div class="chips" id="arenas"><button data-a="random" class="on">Random</button><button data-a="field">Sunny Field</button><button data-a="dusk">Stormy Dusk</button><button data-a="winter">Winter Siege</button></div>
-  <button id="customBtn">Customise</button>
-  <button id="hotBtn">Hot-seat (one device)</button>
-  <button id="createBtn">Create room</button>
-  <div class="row"><input id="codeIn" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false"><button id="joinBtn">Join room</button></div>
-  <div id="homeMsg" class="msg"></div>
-  <div class="build">ad3t-v4.4</div>
+  <header class="ph"><span class="hsp"></span><div class="ttl"><h1>Archery Duel</h1><div class="sub">Castle Siege</div></div><button id="fsHome" class="fsBtn icon" aria-label="Full screen"><svg class="fsIn" viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg><svg class="fsOut" viewBox="0 0 24 24"><path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/></svg></button></header>
+  <div class="pb">
+    <div class="lbl">Match</div>
+    <div class="chips" id="seriesBtns"><button data-s="1" class="on">Single</button><button data-s="3">Best of 3</button><button data-s="5">Best of 5</button></div>
+    <div class="lbl">Arena</div>
+    <div class="chips" id="arenas"><button data-a="random" class="on">Random</button><button data-a="field">Sunny Field</button><button data-a="dusk">Stormy Dusk</button><button data-a="winter">Winter Siege</button></div>
+    <div class="row2"><button id="customBtn">Customise</button><button id="helpBtn">How to play</button></div>
+    <div class="row"><input id="codeIn" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Room code"><button id="joinBtn">Join room</button></div>
+    <div id="homeMsg" class="msg"></div>
+    <button id="installBtn" class="hidden"><svg viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M5 20h14"/></svg>Install app</button>
+    <div id="installTip" class="tip hidden"></div>
+    <div class="build">ad3t-v4.5</div>
+  </div>
+  <footer class="pf"><button id="hotBtn">Hot-seat</button><button id="createBtn">Create room</button></footer>
 </div>
 <div id="lobby" class="panel hidden">
-  <h2>Room code</h2>
-  <div id="code">····</div>
-  <div id="lobbyBest" class="sub"></div>
-  <div class="row2"><button id="copyBtn">Copy code</button><button id="shareBtn">Share link</button></div>
-  <p class="msg" id="lobbyMsg">Waiting for your opponent to join…</p>
-  <button id="cancelBtn">Cancel</button>
+  <header class="ph"><button id="cancelBtn" class="back icon" aria-label="Leave room">←</button><h2>Your room</h2><span class="hsp"></span></header>
+  <div class="pb">
+    <div id="code">····</div>
+    <div id="lobbyBest" class="sub"></div>
+    <p class="msg" id="lobbyMsg">Waiting for your opponent to join…</p>
+    <p class="hintTxt">Send the link (or the code) to a friend. Opening the link joins this room.</p>
+  </div>
+  <footer class="pf"><button id="copyBtn">Copy code</button><button id="shareBtn">Share link</button></footer>
 </div>
 <div id="menu" class="panel hidden">
-  <h2>Castle Siege</h2>
-  <p>Press anywhere and drag: <b>up</b> = higher arc, <b>down</b> = lower, <b>right</b> = more power, <b>left</b> = less. Each drag starts from your last aim. Release to shoot (a tap does nothing). Shots always fly straight at your rival; the wind flag shows a <b>tail</b> wind (carries further) or <b>head</b> wind (falls short). Low shots hit the merlon in front of your rival (2 hits, or 1 heavy arrow, knock it off) – lob over it or break it. <b>Split</b> arrows split into a high, middle and low arrow at the top of the arc. Pick an arrow: <b>Normal</b> 25 / head 50, <b>Heavy</b> 35 / 70 (drops faster, ignores most wind), <b>Split</b> splits into 3 at the top of its arc, 15 / 30 each.</p>
-  <button id="muteBtn">Sound: on</button>
-  <button id="restart">Restart match</button>
-  <button id="homeBtn">Main menu</button>
-  <button id="close">Close</button>
+  <header class="ph"><button id="close" class="back icon" aria-label="Close menu">←</button><h2>Menu</h2><span class="hsp"></span></header>
+  <div class="pb">
+    <button id="helpBtn2">How to play</button>
+    <button id="muteBtn">Sound: on</button>
+    <button id="restart">Restart match</button>
+    <button id="homeBtn">Main menu</button>
+  </div>
+  <footer class="pf"><button id="resume">Resume</button></footer>
+</div>
+<div id="help" class="panel hidden">
+  <header class="ph"><button id="helpBack" class="back icon" aria-label="Back">←</button><h2>How to play</h2><span class="hsp"></span></header>
+  <div class="pb">
+    <p>Press anywhere and drag: <b>up</b> = higher arc, <b>down</b> = lower, <b>right</b> = more power, <b>left</b> = less. Each drag starts from your last aim. Release to shoot (a tap does nothing). Shots always fly straight at your rival; the wind flag shows a <b>tail</b> wind (carries further) or <b>head</b> wind (falls short). Low shots hit the merlon in front of your rival (2 hits, or 1 heavy arrow, knock it off) – lob over it or break it. <b>Split</b> arrows split into a high, middle and low arrow at the top of the arc. Pick an arrow: <b>Normal</b> 25 / head 50, <b>Heavy</b> 35 / 70 (drops faster, ignores most wind), <b>Split</b> splits into 3 at the top of its arc, 15 / 30 each.</p>
+  </div>
+  <footer class="pf"><button id="helpOk">Got it</button></footer>
 </div>
 <div id="custom" class="panel hidden">
-  <h2>Customise</h2>
-  <div class="tabs"><button data-slot="0" class="on">Player 1</button><button data-slot="1">Player 2</button></div>
+  <header class="ph"><button id="customBack" class="back icon" aria-label="Back">←</button><h2>Customise</h2><span class="hsp"></span></header>
+  <div class="pb">
   <div class="cwrap">
     <div id="preview"></div>
+    <div class="cside">
+    <div class="tabs"><button data-slot="0" class="on">Player 1</button><button data-slot="1">Player 2</button></div>
     <div class="opts">
       <div class="orow"><label>Name</label><input id="nameIn" maxlength="12" autocomplete="off" spellcheck="false"></div>
       <div class="orow"><label>Colour</label><div class="sw" id="swColor"></div></div>
@@ -71,21 +97,26 @@
       <div class="orow"><label>Fletching</label><div class="sw" id="swFletch"></div></div>
       <div class="orow"><label>Taunt</label><div class="cyc" data-k="taunt"><button data-d="-1" aria-label="previous taunt">◀</button><span></span><button data-d="1" aria-label="next taunt">▶</button></div></div>
     </div>
+    <div class="note">Hot-seat uses both players · online uses Player 1</div>
+    </div>
   </div>
-  <button id="customDone">Done</button>
-  <div class="note">Hot-seat uses both players · online uses Player 1</div>
+  </div>
+  <footer class="pf"><button id="customDone">Done</button></footer>
 </div>
 <div id="over" class="panel hidden">
-  <h2 id="winner">Blue wins!</h2>
-  <div id="taunt"></div>
-  <div id="overScore"></div>
-  <p id="overMsg" class="msg"></p>
-  <button id="rematch">Rematch</button>
-  <button id="overHome">Menu</button>
+  <header class="ph"><button id="overBack" class="back icon" aria-label="Back to menu">←</button><h2 id="overTitle">Match over</h2><span class="hsp"></span></header>
+  <div class="pb">
+    <h2 id="winner">Blue wins!</h2>
+    <div id="taunt"></div>
+    <div id="overScore"></div>
+    <p id="overMsg" class="msg"></p>
+  </div>
+  <footer class="pf"><button id="overHome">Menu</button><button id="rematch">Rematch</button></footer>
 </div>
 <div id="notice" class="panel hidden">
-  <h2 id="noticeText">Opponent left</h2>
-  <button id="noticeBtn">Back to menu</button>
+  <header class="ph"><button id="noticeBack" class="back icon" aria-label="Back to menu">←</button><h2>Room closed</h2><span class="hsp"></span></header>
+  <div class="pb"><h2 id="noticeText">Opponent left</h2></div>
+  <footer class="pf"><button id="noticeBtn">Back to menu</button></footer>
 </div>
 <script type="module" src="game.js"></script>
 </body>

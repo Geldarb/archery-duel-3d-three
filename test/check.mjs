@@ -13,7 +13,7 @@ async function open(w, h, touch, ctx = b, url = base) {
   await pg.setViewport({ width: w, height: h, isMobile: touch, hasTouch: touch, deviceScaleFactor: 1 });
   pg.on('console', m => { if (m.type() === 'error') errors.push(`${w}: ${m.text()}`); });
   pg.on('pageerror', e => errors.push(`${w}: ${e.message}`));
-  await pg.goto(url, { waitUntil: 'networkidle0' });
+  await pg.goto(url, { waitUntil: 'load' });
   await pg.waitForFunction('window.__ready', { timeout: 20000 });
   await sleep(800);
   return pg;
@@ -25,18 +25,18 @@ const settle = pg => pg.waitForFunction(() => ['aim', 'over', 'menu'].includes(_
 if (which !== 'online') {
   // customisation: set both hot-seat players' looks via the UI, check they persist across reload and show in a match
   {
-    const pg = await open(390, 844, true);
+    const pg = await open(360, 640, true);
     await pg.evaluate(() => localStorage.clear()); await pg.reload({ waitUntil: 'networkidle0' }); await pg.waitForFunction('window.__ready');
     await pg.click('#customBtn'); await sleep(400);
     const cyc = async (k, n) => { for (let i = 0; i < n; i++) await pg.click(`.cyc[data-k="${k}"] button[data-d="1"]`); };
     const setName = async n => { await pg.click('#nameIn', { clickCount: 3 }); await pg.keyboard.press('Backspace'); await pg.type('#nameIn', n); };
     await setName('Robin <b>Hood</b> of Locksley'); await pg.click('#swColor button[data-v="green"]'); await cyc('helmet', 3); await cyc('emblem', 2); await cyc('bow', 2);
     await pg.click('#swFletch button[data-v="gold"]'); await cyc('taunt', 3); await sleep(900);
-    await pg.screenshot({ path: `${out}/custom-390-p1.png` });
+    await pg.screenshot({ path: `${out}/custom-360-p1.png` });
     await pg.click('#custom .tabs button[data-slot="1"]'); await sleep(200);
     await setName('Marian'); await pg.click('#swColor button[data-v="green"]'); await cyc('helmet', 4); await cyc('bow', 1); await cyc('emblem', 3);
     await pg.click('#swFletch button[data-v="pink"]'); await sleep(900);
-    await pg.screenshot({ path: `${out}/custom-390-p2.png` });
+    await pg.screenshot({ path: `${out}/custom-360-p2.png` });
     const fits = await pg.evaluate(() => { const r = document.querySelector('#custom').getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight && document.scrollingElement.scrollHeight <= innerHeight; });
     await pg.click('#customDone'); await sleep(300);
     await pg.reload({ waitUntil: 'networkidle0' }); await pg.waitForFunction('window.__ready'); await sleep(300);
@@ -62,7 +62,7 @@ if (which !== 'online') {
     assert(await pd.$eval('#nameIn', e => e.value) === 'Robin Hoo', 'name shown after reload');
     await pd.close();
   }
-  for (const [w, h, touch] of [[390, 844, true], [1280, 800, false]]) {
+  for (const [w, h, touch] of [[360, 640, true], [1280, 800, false]]) {
     const pg = await open(w, h, touch);
     await pg.screenshot({ path: `${out}/${w}-menu.png` });
     for (const arena of ['field', 'dusk', 'winter']) {
@@ -86,7 +86,7 @@ if (which !== 'online') {
     await pg.close();
   }
   // hot-seat full cycle with each arrow type
-  const pg = await open(390, 844, true);
+  const pg = await open(360, 640, true);
   await pg.click('#arenas button[data-a="field"]'); await pg.click('#seriesBtns button[data-s="3"]'); await pg.click('#hotBtn'); await sleep(800);
   { const s0 = await st(pg); assert(s0.best === 3 && s0.score.join() === '0,0', 'hot-seat Best of 3 started'); }
   // drag mapping (screen space), checked from both players' views: up = higher angle only, right = more power only; taps don't fire
@@ -182,7 +182,7 @@ if (which !== 'online') {
 
 if (which !== 'hot') {
   // two clients in separate browser contexts
-  const A = await open(390, 844, true, await b.createBrowserContext());
+  const A = await open(360, 640, true, await b.createBrowserContext());
   const B = await open(1280, 800, false, await b.createBrowserContext());
   for (const [P, l] of [[A, { name: 'Archie', color: 'orange', helmet: 'kettle', emblem: 'cross', bow: 'recurve', fletch: 'blue', taunt: 4 }],
     [B, { name: 'Bella<i>!', color: 'teal', helmet: 'hood', emblem: 'star', bow: 'gold', fletch: 'pink', taunt: 5 }]]) {
@@ -282,7 +282,7 @@ if (which !== 'hot') {
   console.log('series end screens:', wa, '|', wb, '|', await A.$eval('#overScore', e => e.textContent), '|', await A.$eval('#taunt', e => e.textContent), '| button', await A.$eval('#rematch', e => e.textContent));
   await sleep(500); await A.screenshot({ path: `${out}/online-A-over.png` }); await B.screenshot({ path: `${out}/online-B-over.png` });
   { // invalid and full room links
-    const C = await open(390, 844, true, await b.createBrowserContext(), `${base}/?room=ZZZZ`);
+    const C = await open(360, 640, true, await b.createBrowserContext(), `${base}/?room=ZZZZ`);
     await C.waitForFunction(() => /Couldn't join/.test(document.querySelector('#homeMsg').textContent), { timeout: 10000 });
     const m1 = await C.$eval('#homeMsg', e => e.textContent), home = await C.$eval('#home', e => !e.classList.contains('hidden'));
     await C.screenshot({ path: `${out}/invalid-link.png` });

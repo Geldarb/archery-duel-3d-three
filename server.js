@@ -4,9 +4,13 @@ const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
 
-const BUILD = 'ad3t-v4.4';
+const BUILD = 'ad3t-v4.5';
 const app = express();
 app.get('/health', (req, res) => res.json({ ok: true, build: BUILD, rooms: rooms.size }));
+const fs = require('fs');
+const SW = fs.readFileSync(path.join(__dirname, 'public/sw.js'), 'utf8').replace('__BUILD__', BUILD); // cache name = build, so deploys never serve stale files
+app.get('/sw.js', (req, res) => res.set({ 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', 'Service-Worker-Allowed': '/' }).send(SW));
+app.get(['/', '/index.html'], (req, res, next) => { res.set('Cache-Control', 'no-cache'); next(); });
 app.use('/vendor/jsm', express.static(path.join(__dirname, 'node_modules/three/examples/jsm')));
 app.use('/vendor', express.static(path.join(__dirname, 'node_modules/three/build')));
 app.use(express.static(path.join(__dirname, 'public')));

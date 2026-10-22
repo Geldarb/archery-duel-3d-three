@@ -170,7 +170,9 @@ function startMatch({ arenaId, mode, me = 0, turn = 0, hp = [HP, HP], merlons = 
   show('#roundCard', false);
   archers.forEach((a, i) => a.pose(0.5, 0, true, S.types[i]));
   ['#home', '#lobby', '#over', '#menu', '#notice'].forEach(s => show(s, false));
-  ['#hud', '#menuBtn', '#bottom'].forEach(s => show(s, true));
+  ['#hud', '#menuBtn', '#bottom', '#fsGame'].forEach(s => show(s, true));
+  ['#help', '#custom'].forEach(s => show(s, false));
+  if (!(history.state && history.state.ad3t)) history.pushState({ ad3t: 'game' }, ''); // Android back in a match opens the menu
   show('#restart', mode === 'hot');
   $('#homeBtn').textContent = mode === 'online' ? 'Leave room' : 'Main menu';
   camJump = true; updateHud();
@@ -180,7 +182,7 @@ const startHot = (arenaId = pickArena(), turn = 0) => startMatch({ arenaId, mode
 function goHome() {
   if (S.mode === 'online' && sock) sock.emit('leave');
   Object.assign(S, { mode: 'menu', phase: 'menu', play: null, queue: [], pending: null, cardT: 0 });
-  ['#hud', '#menuBtn', '#bottom', '#pip', '#lobby', '#over', '#menu', '#notice', '#roundCard'].forEach(s => show(s, false));
+  ['#hud', '#menuBtn', '#fsGame', '#bottom', '#pip', '#lobby', '#over', '#menu', '#notice', '#roundCard', '#help', '#custom'].forEach(s => show(s, false));
   show('#home', true); $('#homeMsg').textContent = '';
   setLooks([loadLook(0), loadLook(1)]);
 }
@@ -188,7 +190,7 @@ function notice(msg) {
   if (S.mode !== 'online') return;
   S.mode = 'menu'; S.phase = 'menu'; S.pending = null; S.cardT = 0;
   ['#over', '#menu', '#lobby', '#roundCard'].forEach(s => show(s, false));
-  $('#noticeText').textContent = msg; show('#notice', true);
+  $('#noticeText').textContent = msg; openPanel('#notice');
 }
 
 // ---------- shooting & playback ----------
@@ -268,7 +270,8 @@ function endShot() {
     $('#taunt').textContent = `${nameOf(w)}: “${TAUNTS[looks[w].taunt]}”`; $('#taunt').style.background = css(cols[w]);
     $('#overScore').textContent = series ? `${nameOf(0)} ${S.score[0]} - ${S.score[1]} ${nameOf(1)}` : '';
     $('#rematch').textContent = series ? 'Rematch series' : 'Rematch';
-    $('#overMsg').textContent = ''; $('#rematch').disabled = false; show('#over', true); sfx.fanfare();
+    $('#overTitle').textContent = series ? 'Series over' : 'Match over';
+    $('#overMsg').textContent = ''; $('#rematch').disabled = false; show('#menu', false); openPanel('#over'); sfx.fanfare();
   } else {
     S.phase = 'aim';
     archers[S.turn].pose(0.5, 0, true, S.types[S.turn]);
@@ -371,13 +374,69 @@ $('#copyBtn').onclick = () => {
   (navigator.clipboard ? navigator.clipboard.writeText(code) : Promise.reject()).then(() => { $('#copyBtn').textContent = 'Copied!'; }, () => { $('#copyBtn').textContent = `Code: ${code}`; });
   setTimeout(() => { $('#copyBtn').textContent = 'Copy code'; }, 1500);
 };
-$('#cancelBtn').onclick = () => { if (sock) sock.emit('leave'); show('#lobby', false); show('#home', true); $('#homeMsg').textContent = ''; };
-$('#menuBtn').onclick = () => show('#menu', $('#menu').classList.contains('hidden'));
-$('#close').onclick = () => show('#menu', false);
+function cancelLobby() { if (sock) sock.emit('leave'); show('#lobby', false); show('#home', true); $('#homeMsg').textContent = ''; }
+// ---------- panels + history: every panel has a Back (←); Android/browser back closes the top panel ----------
+let helpFrom = null;
+function openHelp() { helpFrom = ['#menu', '#home'].find(s => !$(s).classList.contains('hidden')) || null; if (helpFrom) show(helpFrom, false); openPanel('#help'); }
+function closeHelp() { show('#help', false); if (helpFrom) show(helpFrom, true); helpFrom = null; }
+const BACK = { '#help': closeHelp, '#custom': () => closeCustom(), '#menu': () => show('#menu', false), '#notice': goHome, '#over': goHome, '#lobby': cancelLobby };
+const topPanel = () => Object.keys(BACK).find(s => !$(s).classList.contains('hidden'));
+function openPanel(sel) { show(sel, true); const pb = $(sel + ' .pb'); if (pb) pb.scrollTop = 0; history.pushState({ ad3t: sel }, ''); }
+function runBack() {
+  const top = topPanel();
+  if (top) BACK[top]();
+  else if (S.mode !== 'menu' && S.phase !== 'menu') openPanel('#menu'); // back during a match opens the menu
+}
+let skipPop = 0;
+function uiBack() { runBack(); if (history.state && history.state.ad3t) { skipPop++; history.back(); } }
+addEventListener('popstate', () => { if (skipPop) { skipPop--; return; } runBack(); });
+$('#cancelBtn').onclick = uiBack;
+$('#menuBtn').onclick = () => ($('#menu').classList.contains('hidden') ? openPanel('#menu') : uiBack());
+$('#close').onclick = uiBack; $('#resume').onclick = uiBack;
+$('#helpBtn').onclick = $('#helpBtn2').onclick = openHelp;
+$('#helpBack').onclick = uiBack; $('#helpOk').onclick = uiBack;
 $('#restart').onclick = () => startHot(S.arenaId);
 $('#homeBtn').onclick = goHome;
-$('#overHome').onclick = goHome;
-$('#noticeBtn').onclick = goHome;
+$('#overHome').onclick = uiBack; $('#overBack').onclick = uiBack;
+$('#noticeBtn').onclick = uiBack; $('#noticeBack').onclick = uiBack;
+// ---------- visible viewport (browser bars, keyboard) -> --vh; full screen; install (PWA) ----------
+function setVH() {
+  const vv = window.visualViewport, st = document.documentElement.style;
+  st.setProperty('--vh', `${Math.round(vv ? vv.height : innerHeight)}px`); st.setProperty('--vt', `${Math.round(vv ? vv.offsetTop : 0)}px`);
+}
+setVH(); addEventListener('resize', setVH); if (window.visualViewport) { visualViewport.addEventListener('resize', setVH); visualViewport.addEventListener('scroll', setVH); }
+const docEl = document.documentElement;
+const fsOn = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+const fsOK = !!(document.fullscreenEnabled || document.webkitFullscreenEnabled) && !!(docEl.requestFullscreen || docEl.webkitRequestFullscreen);
+document.body.classList.toggle('nofs', !fsOK); // e.g. iPhone Safari: no Fullscreen API for pages
+function toggleFs() {
+  try {
+    if (fsOn()) return Promise.resolve((document.exitFullscreen || document.webkitExitFullscreen).call(document)).catch(() => {});
+    return Promise.resolve((docEl.requestFullscreen || docEl.webkitRequestFullscreen).call(docEl, { navigationUI: 'hide' })).then(() => {
+      // keep landscape players in landscape; never force portrait players to rotate
+      if (innerWidth > innerHeight && screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {});
+    }).catch(() => {});
+  } catch { return Promise.resolve(); }
+}
+function fsChanged() {
+  document.querySelectorAll('.fsBtn').forEach(b => { b.classList.toggle('on', fsOn()); b.setAttribute('aria-label', fsOn() ? 'Exit full screen' : 'Full screen'); });
+  setVH(); updateInstall();
+}
+document.querySelectorAll('.fsBtn').forEach(b => { b.onclick = () => { sfx.unlock(); toggleFs(); }; });
+document.addEventListener('fullscreenchange', fsChanged); document.addEventListener('webkitfullscreenchange', fsChanged);
+let installEvt = null;
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const installed = () => matchMedia('(display-mode: standalone)').matches || (matchMedia('(display-mode: fullscreen)').matches && !fsOn()) || navigator.standalone === true;
+function updateInstall() { show('#installBtn', !installed()); if (installed()) show('#installTip', false); }
+addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; updateInstall(); });
+addEventListener('appinstalled', () => { installEvt = null; show('#installBtn', false); show('#installTip', false); });
+$('#installBtn').onclick = () => {
+  if (installEvt) { installEvt.prompt(); installEvt.userChoice.finally(() => { installEvt = null; updateInstall(); }); return; }
+  $('#installTip').textContent = isIOS ? 'Tap Share (the square with an arrow) → Add to Home Screen.' : 'Open your browser menu (⋮) → Install app / Add to Home screen.';
+  show('#installTip', true);
+};
+updateInstall();
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 $('#muteBtn').onclick = () => { sfx.setMuted(!sfx.isMuted()); updateHud(); };
 $('#rematch').onclick = () => {
   if (S.mode === 'hot') return startHot(S.arenaId, 1 - S.seriesWinner);
@@ -391,7 +450,7 @@ function net() {
   sock = window.io();
   sock.on('created', ({ code, best }) => {
     $('#code').textContent = code; $('#lobbyBest').textContent = best > 1 ? `Best of ${best}` : 'Single match';
-    show('#home', false); show('#lobby', true);
+    show('#home', false); openPanel('#lobby');
   });
   sock.on('joinError', msg => { show('#lobby', false); show('#home', true); $('#homeMsg').textContent = autoJoin ? `Couldn't join room ${autoJoin}: ${msg}.` : msg; autoJoin = null; });
   sock.on('start', ({ arena: id, you, hp, merlons, turn, wind, looks: ls, best, score }) => {
@@ -552,8 +611,10 @@ document.querySelectorAll('.cyc').forEach(c => c.querySelectorAll('button').forE
 $('#nameIn').oninput = () => { const n = cleanName($('#nameIn').value, ''); cLook = sanitizeLook({ ...cLook, name: n || ['Blue', 'Red'][cSlot] }, cSlot); saveLook(cSlot, cLook); };
 $('#nameIn').onblur = () => { $('#nameIn').value = cLook.name; };
 document.querySelectorAll('#custom .tabs button').forEach(b => b.onclick = () => { cSlot = +b.dataset.slot; cLook = loadLook(cSlot); $('#nameIn').value = cLook.name; renderCustom(); });
-$('#customBtn').onclick = () => { sfx.unlock(); show('#home', false); show('#custom', true); cLook = loadLook(cSlot); $('#nameIn').value = cLook.name; renderCustom(); };
-$('#customDone').onclick = () => { show('#custom', false); show('#home', true); setLooks([loadLook(0), loadLook(1)]); };
+$('#customBtn').onclick = () => { sfx.unlock(); show('#home', false); openPanel('#custom'); cLook = loadLook(cSlot); $('#nameIn').value = cLook.name; renderCustom(); };
+function closeCustom() { if (document.activeElement) document.activeElement.blur(); show('#custom', false); show('#home', true); setLooks([loadLook(0), loadLook(1)]); }
+$('#customDone').onclick = uiBack; $('#customBack').onclick = uiBack;
+$('#nameIn').addEventListener('focus', () => setTimeout(() => $('#nameIn').scrollIntoView({ block: 'nearest' }), 300)); // keep it visible above the keyboard
 let pvRenderer = null, pvEffect = null; // own small canvas inside the panel (the main canvas sits behind the panel)
 function drawPreview() {
   const box = $('#preview');
