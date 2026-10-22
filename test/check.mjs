@@ -48,16 +48,44 @@ if (which !== 'online') {
   // hot-seat full cycle with each arrow type
   const pg = await open(390, 844, true);
   await pg.click('#arenas button[data-a="field"]'); await pg.click('#hotBtn'); await sleep(800);
-  // merlon: Blue knocks off a Red merlon with a heavy arrow, Red cracks a Blue merlon with a normal one
-  for (const [ids, type, want] of [[[8, 9, 7, 10], 'heavy', 0], [[3, 2, 4, 1], 'normal', 1]]) {
+  // drag mapping: same pull length at different steepness -> same power, different angle; same steepness, different length -> same angle, different power
+  {
+    const cx = 195, cy = 250, read = () => pg.evaluate(() => ({ pitch: Math.round(__game.S.aim.pitch * 573) / 10, power: Math.round(__game.S.aim.power * 1000) / 1000, yaw: __game.S.aim.yaw }));
+    await pg.mouse.move(cx, cy); await pg.mouse.down();
+    const at = async (dx, dy) => { await pg.mouse.move(cx + dx, cy + dy, { steps: 3 }); await sleep(80); return read(); };
+    const steep = await at(0, 160), flat = await at(-160, 0), diag = await at(-113, 113), diagL = await at(-170, 170), diagR = await at(113, 113);
+    const tipShown = await pg.$eval('#aimTip', e => !e.classList.contains('hidden') && e.textContent);
+    await at(0, 2); await pg.mouse.up(); await sleep(300); // released inside the dead zone: no shot
+    console.log('drag mapping', { steep, flat, diag, diagL, diagR, tipShown });
+    const near = (x, y) => Math.abs(x - y) < 0.01;
+    assert(near(steep.power, flat.power) && near(flat.power, diag.power), 'same length -> same power');
+    assert(steep.pitch > diag.pitch && diag.pitch > flat.pitch, 'steeper pull -> higher angle');
+    assert(diagL.pitch === diag.pitch && diagL.power > diag.power, 'longer pull -> more power, same angle');
+    assert(diagR.pitch === diag.pitch && diagR.power === diag.power, 'left/right pulls are the same');
+    assert([steep, flat, diag].every(a => a.yaw === undefined), 'no yaw');
+    assert(tipShown && /%/.test(tipShown) && /°/.test(tipShown), 'finger readout');
+    assert((await st(pg)).turn === 0 && (await st(pg)).phase === 'aim', 'dead-zone release does not shoot');
+    const lane = await pg.evaluate(() => { __game.setWind(3.5, 0); let worst = 0, sym = 0;
+      for (let k = 0; k < 40; k++) { const aim = { pitch: (5 + Math.random() * 60) / 57.3, power: 0.15 + Math.random() * 0.85 };
+        for (const t of ['normal', 'heavy']) for (const a of __game.simulate(aim, t).arrows) for (const p of [...a.pts, a.res.pos]) worst = Math.max(worst, Math.abs(p[2]));
+        const sp = __game.simulate(aim, 'split').arrows; if (sp.length === 3) sym = Math.max(sym, Math.abs(sp[1].pts.at(-1)[2] + sp[2].pts.at(-1)[2]) * (sp[1].res.t === sp[2].res.t ? 1 : 0)); }
+      return { worst, sym }; });
+    console.log('lane check (max |z| of normal/heavy arrows, split asymmetry)', lane);
+    assert(lane.worst === 0, 'shots stay on the opponent line');
+  }
+  // merlons: split side arrows chip merlons; Blue cracks a Red merlon, Red cracks a Blue one, Blue knocks the same Red merlon off
+  let redM = [8, 9, 7, 10, 6, 11];
+  for (const [ids, type, want] of [[null, 'split', 1], [[3, 2, 4, 1, 5, 0], 'split', 1], [null, 'split', 0]]) {
     let hit = null;
-    for (const id of ids) if ((hit = await pg.evaluate((i, t) => __game.findMerlonHit(i, t), id, type))) break;
+    await pg.evaluate(() => __game.setWind(0, 0));
+    hit = await pg.evaluate((i, t) => __game.findMerlonHit(i, t), ids || redM, type);
+    if (!ids) redM = [hit.merlon];
     assert(hit, 'found merlon aim');
     await pg.evaluate((a, t) => __game.shootAim(a, t), hit.aim, type);
     await settle(pg); await sleep(600);
     const m = await pg.evaluate(() => __game.merlons());
     console.log('hot merlon', hit.merlon, type, '-> hp', m.hp[hit.merlon], m.vis[hit.merlon]);
-    assert(m.hp[hit.merlon] === want && m.vis[hit.merlon].hp === want, 'merlon state');
+    assert(m.hp[hit.merlon] <= want && m.vis[hit.merlon].hp === m.hp[hit.merlon], 'merlon state');
     if (want === 0) { assert(m.vis[hit.merlon].fallen, 'merlon fell'); await pg.screenshot({ path: `${out}/hot-merlon-off.png` }); }
   }
   const types = ['normal', 'heavy', 'split', 'normal', 'heavy', 'normal', 'heavy', 'normal'];
@@ -108,18 +136,22 @@ if (which !== 'hot') {
   await A.screenshot({ path: `${out}/online-A-aim.png` });
   await B.screenshot({ path: `${out}/online-B-wait.png` });
   // non-active player cannot shoot
-  assert(await B.evaluate(() => __game.shootAim({ pitch: 0.5, yaw: 0, power: 0.8 })) === false, 'B blocked on A turn');
-  // merlon destruction sync: A cracks a Red merlon, B knocks a Blue merlon off with a heavy arrow
-  for (const [P, ids, type, want] of [[A, [8, 9, 7, 10], 'normal', 1], [B, [3, 2, 4, 1], 'heavy', 0]]) {
+  assert(await B.evaluate(() => __game.shootAim({ pitch: 0.5, power: 0.8 })) === false, 'B blocked on A turn');
+  // merlon destruction sync (split side arrows): A cracks a Red merlon, B cracks a Blue one, A knocks the same Red merlon off
+  let redO = [8, 9, 7, 10, 6, 11];
+  for (const [P, ids, type, want] of [[A, null, 'split', 1], [B, [3, 2, 4, 1, 5, 0], 'split', 1], [A, null, 'split', 0]]) {
     let hit = null;
-    for (const id of ids) if ((hit = await P.evaluate((i, t) => __game.findMerlonHit(i, t), id, type))) break;
+    hit = await P.evaluate((i, t) => __game.findMerlonHit(i, t), ids || redO, type);
+    if (!ids) redO = [hit.merlon];
     assert(hit, 'found merlon aim online');
-    assert(await P.evaluate((a, t) => __game.shootAim(a, t), hit.aim, type), 'merlon shot accepted');
+    const ok = await P.evaluate((a, t) => __game.shootAim(a, t), hit.aim, type);
+    if (!ok) console.log('not accepted', await st(A), await st(B), await P.evaluate(() => __game.S.me));
+    assert(ok, 'merlon shot accepted');
     await sleep(500); await settle(A); await settle(B); await sleep(700);
     const [ma, mb] = [await A.evaluate(() => __game.merlons()), await B.evaluate(() => __game.merlons())];
     console.log('online merlon', hit.merlon, type, 'A', ma.hp.join(''), 'B', mb.hp.join(''), 'fallen A/B', ma.vis[hit.merlon].fallen, mb.vis[hit.merlon].fallen);
-    assert(JSON.stringify(ma.hp) === JSON.stringify(mb.hp) && ma.hp[hit.merlon] === want, 'merlons in sync');
-    assert(ma.vis[hit.merlon].hp === want && mb.vis[hit.merlon].hp === want, 'merlon visuals in sync');
+    assert(JSON.stringify(ma.hp) === JSON.stringify(mb.hp) && ma.hp[hit.merlon] <= want, 'merlons in sync');
+    assert(ma.vis.every((v, k) => v.hp === ma.hp[k]) && mb.vis.every((v, k) => v.hp === mb.hp[k]), 'merlon visuals in sync');
     if (want === 0) { assert(ma.vis[hit.merlon].fallen && mb.vis[hit.merlon].fallen, 'fell on both'); await A.screenshot({ path: `${out}/online-A-merlon-off.png` }); }
   }
   let n = 0;

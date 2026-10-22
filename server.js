@@ -4,7 +4,7 @@ const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
 
-const BUILD = 'ad3t-v4';
+const BUILD = 'ad3t-v4.1';
 const app = express();
 app.get('/health', (req, res) => res.json({ ok: true, build: BUILD, rooms: rooms.size }));
 app.use('/vendor/jsm', express.static(path.join(__dirname, 'node_modules/three/examples/jsm')));
@@ -47,12 +47,12 @@ import('./public/sim.js').then(sim => {
     });
     sock.on('aim', a => {
       const r = sock.data.room, o = r && r.socks[1 - sock.data.idx];
-      if (o && r.turn === sock.data.idx && a) o.emit('aim', { pitch: clamp(a.pitch, -1, 2), yaw: clamp(a.yaw, -1, 1), draw: clamp(a.draw, 0, 1) });
+      if (o && r.turn === sock.data.idx && a) o.emit('aim', { pitch: clamp(a.pitch, -1, 2), draw: clamp(a.draw, 0, 1) });
     });
     sock.on('shoot', ({ aim = {}, type } = {}) => {
       const r = sock.data.room, i = sock.data.idx;
       if (!r || !r.socks[1] || r.winner >= 0 || r.turn !== i) return; // only the active player may shoot
-      const a = { pitch: clamp(aim.pitch, -0.3, 1.45), yaw: clamp(aim.yaw, -0.25, 0.25), power: clamp(aim.power, 0.1, 1) };
+      const a = { pitch: clamp(aim.pitch, 0, 1.3), power: clamp(aim.power, 0.1, 1) }; // any client yaw is dropped
       const shot = sim.simulateShot(r.world, i, a, r.wind, type, r.merlons);
       ({ hp: r.hp, merlons: r.merlons } = sim.applyShot(r.hp, r.merlons, shot)); // server tracks HP and destroyed merlons
       r.winner = sim.winnerOf(r.hp);

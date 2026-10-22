@@ -77,10 +77,10 @@ export function archerHit(i, p) { // chunky, big-headed archer standing at the t
   if (y > 0 && y < 1.25 && r2d < 0.34 ** 2) return 'body';
   return null;
 }
-// aim: { pitch, yaw (+ = shooter's right), power 0..1 }
+// aim: { pitch, power 0..1 }. No sideways aim: every shot flies straight down the lane at the opponent (z = 0).
 export function launch(i, aim) {
   const f = i ? -1 : 1, cp = Math.cos(aim.pitch);
-  const d = { x: f * cp * Math.cos(aim.yaw), y: Math.sin(aim.pitch), z: f * cp * Math.sin(aim.yaw) };
+  const d = { x: f * cp, y: Math.sin(aim.pitch), z: 0 };
   const v = MAXV * aim.power;
   return { pos: { x: -f * DIST + d.x * 0.9, y: WALL_H + SHOULDER + d.y * 0.9, z: d.z * 0.9 }, vel: { x: d.x * v, y: d.y * v, z: d.z * v } };
 }
@@ -135,4 +135,4 @@ export function applyShot(hp, merlons, shot) {
   return s;
 }
 export const winnerOf = hp => (hp[0] <= 0 ? 1 : hp[1] <= 0 ? 0 : -1);
-export const randomWind = () => ({ x: r2((Math.random() * 2 - 1) * 3.5), z: r2((Math.random() * 2 - 1) * 1.2) });
+export const randomWind = () => ({ x: r2((Math.random() * 2 - 1) * 3.5), z: 0 }); // head/tail wind only, so wind never pushes a shot sideways

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="build" content="ad3t-v4">
+<meta name="build" content="ad3t-v4.1">
 <title>Archery Duel: Castle Siege</title>
 <link rel="preload" href="fonts/Fredoka-700.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Ctext y=%2214%22 font-size=%2214%22%3E%F0%9F%8F%B9%3C/text%3E%3C/svg%3E">
@@ -22,6 +22,7 @@
 <div id="bottom" class="hidden">
   <div id="hint"></div>
   <div id="readout"></div>
+  <div id="aimTip" class="hidden"></div>
   <div id="types">
     <button data-t="normal" class="on"><svg viewBox="0 0 40 40"><path d="M9 31 29 11" stroke="#c98a4b" stroke-width="3" stroke-linecap="round"/><path d="M33 7 22.5 11 29 17.5z" fill="#e8edf3" stroke="#2a2a35" stroke-width="1.5" stroke-linejoin="round"/><path d="M11 29 5 27l2-5 6 3zM11 29l2 6 5-2-3-6z" fill="#ffffff" stroke="#2a2a35" stroke-width="1.3" stroke-linejoin="round"/></svg><small>Normal</small></button><button data-t="heavy"><svg viewBox="0 0 40 40"><path d="M9 31 29 11" stroke="#6b4423" stroke-width="5" stroke-linecap="round"/><path d="M33 7 22.5 11 29 17.5z" fill="#8a94a3" stroke="#2a2a35" stroke-width="1.5" stroke-linejoin="round"/><path d="M11 29 5 27l2-5 6 3zM11 29l2 6 5-2-3-6z" fill="#e0342c" stroke="#2a2a35" stroke-width="1.3" stroke-linejoin="round"/></svg><small>Heavy</small></button><button data-t="split"><svg viewBox="0 0 40 40"><g stroke="#2a2a35" stroke-width="1.2" stroke-linejoin="round"><path d="M8 32 20 14M8 32l14-6M8 32l4-15" stroke="#c98a4b" stroke-width="2.6" stroke-linecap="round"/><path d="M23 9l-6 4 5 3zM26 24l-6-3 1 6zM13 12l-4 4 5 2z" fill="#e8edf3"/><circle cx="8" cy="32" r="3.5" fill="#ffc928"/></g></svg><small>Split</small></button>
   </div>
@@ -35,7 +36,7 @@
   <button id="createBtn">Create room</button>
   <div class="row"><input id="codeIn" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false"><button id="joinBtn">Join room</button></div>
   <div id="homeMsg" class="msg"></div>
-  <div class="build">ad3t-v4</div>
+  <div class="build">ad3t-v4.1</div>
 </div>
 <div id="lobby" class="panel hidden">
   <h2>Room code</h2>
@@ -46,7 +47,7 @@
 </div>
 <div id="menu" class="panel hidden">
   <h2>Castle Siege</h2>
-  <p>Drag <b>down</b> anywhere to draw the bow: further = longer shot. Drag <b>left/right</b> to aim sideways. Release to shoot. Watch the banners for wind. Arrows chip the merlons beside you (2 hits, or 1 heavy arrow, knocks one off), so your cover can crumble. Pick an arrow: <b>Normal</b> 25 / head 50, <b>Heavy</b> 35 / 70 (drops faster, ignores most wind), <b>Split</b> splits into 3 at the top of its arc, 15 / 30 each.</p>
+  <p>Press anywhere and pull back like a bowstring. <b>Longer pull</b> = more power. <b>Steeper pull</b> (straight down) = higher arc, flatter pull (sideways) = lower arc. Release to shoot. Shots always fly straight at your rival; the wind flag shows a <b>tail</b> wind (carries further) or <b>head</b> wind (falls short). Split arrows fan out and can chip the merlons (2 hits knock one off). Pick an arrow: <b>Normal</b> 25 / head 50, <b>Heavy</b> 35 / 70 (drops faster, ignores most wind), <b>Split</b> splits into 3 at the top of its arc, 15 / 30 each.</p>
   <button id="muteBtn">Sound: on</button>
   <button id="restart">Restart match</button>
   <button id="homeBtn">Main menu</button>

@@ -96,8 +96,8 @@ function makeArcher(i) { // chunky big-headed cartoon archer
   scene.add(root);
   const a = {
     root, f,
-    pose(pitch, yaw, draw, showArrow, type) {
-      aim.rotation.set(0, -yaw, pitch);
+    pose(pitch, draw, showArrow, type) {
+      aim.rotation.set(0, 0, pitch);
       if (type && nocked.userData.type !== type) { aim.remove(nocked); nocked = makeArrow(type); nocked.userData.type = type; aim.add(nocked); }
       const nx = tipX - 0.42 * draw, nock = new V(nx, 0, 0);
       stringGeo.attributes.position.setX(1, nx); stringGeo.attributes.position.needsUpdate = true;
@@ -105,14 +105,14 @@ function makeArcher(i) { // chunky big-headed cartoon archer
       nocked.visible = showArrow; nocked.position.set(nx + 0.92, 0, 0);
     },
   };
-  a.pose(0.5, 0, 0, true);
+  a.pose(0.5, 0, true);
   return a;
 }
 const archers = [makeArcher(0), makeArcher(1)];
 const stuck = [];
 
 // ---------- state ----------
-const S = { mode: 'menu', phase: 'menu', me: 0, turn: 0, hp: [HP, HP], merlons: fullMerlons(), wind: { x: 0, z: 0 }, aim: { pitch: 0.5, yaw: 0, power: 0 }, draw: 0,
+const S = { mode: 'menu', phase: 'menu', me: 0, turn: 0, hp: [HP, HP], merlons: fullMerlons(), wind: { x: 0, z: 0 }, aim: { pitch: 0.5, power: 0 }, draw: 0,
   types: ['normal', 'normal'], arenaChoice: 'random', arenaId: 'field', play: null, queue: [], winner: -1, focus: null };
 const viewer = () => (S.mode === 'online' ? S.me : S.turn);
 const myTurn = () => S.phase === 'aim' && (S.mode === 'hot' || S.turn === S.me);
@@ -123,7 +123,7 @@ function startMatch({ arenaId, mode, me = 0, turn = 0, hp = [HP, HP], merlons = 
   stuck.length = 0;
   arena.resetMerlons(merlons);
   Object.assign(S, { mode, me, turn, hp: [...hp], merlons: [...merlons], wind, arenaId, phase: 'aim', winner: -1, play: null, queue: [], focus: null, draw: 0 });
-  archers.forEach((a, i) => a.pose(0.5, 0, 0, true, S.types[i]));
+  archers.forEach((a, i) => a.pose(0.5, 0, true, S.types[i]));
   ['#home', '#lobby', '#over', '#menu', '#notice'].forEach(s => show(s, false));
   ['#hud', '#menuBtn', '#bottom'].forEach(s => show(s, true));
   show('#restart', mode === 'hot');
@@ -155,7 +155,7 @@ function fire() {
 }
 function playShot(m) {
   if (S.play) { S.queue.push(m); return; }
-  archers[m.shooter].pose(m.aim.pitch, m.aim.yaw, 0, false);
+  archers[m.shooter].pose(m.aim.pitch, 0, false);
   const arrows = m.sim.arrows.map(x => { const mesh = makeArrow(m.sim.type); mesh.visible = false; scene.add(mesh); stuck.push(mesh); return { ...x, m: mesh, landed: false }; });
   S.play = { arrows, ft: 0, hold: 1.3, m };
   S.phase = 'fly'; S.draw = 0; preview.visible = false;
@@ -205,14 +205,14 @@ function endShot() {
   const m = S.play.m, lead = playLead();
   S.focus = lead ? lead.m.getWorldPosition(new V()) : null;
   m.merlons.forEach((h, id) => arena.setMerlon(id, h, true)); // authoritative state
-  Object.assign(S, { hp: [...m.hp], merlons: [...m.merlons], turn: m.turn, wind: m.wind, play: null, aim: { pitch: 0.5, yaw: 0, power: 0 } });
+  Object.assign(S, { hp: [...m.hp], merlons: [...m.merlons], turn: m.turn, wind: m.wind, play: null, aim: { pitch: 0.5, power: 0 } });
   if (m.winner >= 0) {
     S.phase = 'over'; S.winner = m.winner;
     $('#winner').textContent = S.mode === 'online' ? (m.winner === S.me ? 'You win!' : 'You lose') : `${NAMES[m.winner]} wins!`;
     $('#overMsg').textContent = ''; $('#rematch').disabled = false; show('#over', true); sfx.fanfare();
   } else {
     S.phase = 'aim';
-    archers[S.turn].pose(0.5, 0, 0, true, S.types[S.turn]);
+    archers[S.turn].pose(0.5, 0, true, S.types[S.turn]);
   }
   updateHud();
   if (S.queue.length) playShot(S.queue.shift());
@@ -233,9 +233,15 @@ function updatePreview() {
   attr.needsUpdate = true; preview.geometry.computeBoundingSphere(); preview.visible = true;
 }
 
-// ---------- input: drag down to draw (range), left/right to aim ----------
+// ---------- input: pull back like a bowstring. Pull length = power, pull steepness = elevation. No sideways aim. ----------
 let drag = null, lastCreak = 0, lastAimSend = 0;
 const canvas = renderer.domElement;
+const PITCH_MIN = 5, PITCH_MAX = 65; // degrees: flat sideways pull .. straight-down pull
+function dragAim(dx, dy) { // dx/dy = pointer movement in px (down = +dy); left and right pulls behave the same
+  const t = clamp(Math.hypot(dx, dy) / (0.4 * Math.min(innerHeight, innerWidth * 1.6)), 0, 1);
+  const steep = Math.atan2(Math.max(dy, 0), Math.abs(dx)) / (Math.PI / 2); // 0 = sideways, 1 = straight down
+  return { t, aim: { pitch: (PITCH_MIN + (PITCH_MAX - PITCH_MIN) * steep) * DEG, power: 0.15 + 0.85 * t } };
+}
 canvas.addEventListener('pointerdown', e => {
   sfx.unlock();
   if (!myTurn()) return;
@@ -243,23 +249,23 @@ canvas.addEventListener('pointerdown', e => {
 });
 canvas.addEventListener('pointermove', e => {
   if (!drag || !myTurn()) return;
-  const px = drag.x - e.clientX, py = e.clientY - drag.y;
-  const t = clamp(py / (0.42 * innerHeight), 0, 1); // one pull sets range: steeper and stronger together
-  S.draw = t;
-  S.aim = { pitch: (8 + 42 * t) * DEG, yaw: clamp(px / (0.35 * innerWidth), -1, 1) * 12 * DEG, power: 0.3 + 0.7 * t };
-  archers[S.turn].pose(S.aim.pitch, S.aim.yaw, t, true, S.types[S.turn]);
+  const { t, aim } = dragAim(e.clientX - drag.x, e.clientY - drag.y);
+  S.draw = t; S.aim = aim;
+  archers[S.turn].pose(aim.pitch, t, true, S.types[S.turn]);
   if (Math.abs(t - lastCreak) > 0.08) { sfx.creak(t); lastCreak = t; }
   $('#hint').textContent = '';
-  const yd = Math.round(S.aim.yaw / DEG);
-  $('#readout').textContent = t < 0.04 ? '' : `${Math.round(t * 100)}%${yd ? ` · ${yd > 0 ? '→' : '←'} ${Math.abs(yd)}°` : ''}`;
+  const tip = $('#aimTip'); // readout next to the finger
+  tip.innerHTML = `<b>${Math.round(aim.power * 100)}%</b> · <i>${Math.round(aim.pitch / DEG)}°</i>`;
+  Object.assign(tip.style, { left: `${clamp(e.clientX, 50, innerWidth - 50)}px`, top: `${Math.max(e.clientY - 34, 70)}px` });
+  show('#aimTip', t >= 0.04);
   if (t >= 0.04) updatePreview(); else preview.visible = false;
-  if (S.mode === 'online' && performance.now() - lastAimSend > 100) { lastAimSend = performance.now(); sock.emit('aim', { pitch: S.aim.pitch, yaw: S.aim.yaw, draw: t }); }
+  if (S.mode === 'online' && performance.now() - lastAimSend > 100) { lastAimSend = performance.now(); sock.emit('aim', { pitch: aim.pitch, draw: t }); }
 });
 const endDrag = () => {
   if (!drag) return;
-  drag = null; lastCreak = 0;
+  drag = null; lastCreak = 0; show('#aimTip', false);
   if (myTurn() && S.draw >= 0.04) fire();
-  else if (myTurn()) { S.draw = 0; preview.visible = false; $('#readout').textContent = ''; archers[S.turn].pose(S.aim.pitch, S.aim.yaw, 0, true); updateHud(); }
+  else if (myTurn()) { S.draw = 0; preview.visible = false; archers[S.turn].pose(S.aim.pitch, 0, true); updateHud(); }
 };
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
@@ -267,7 +273,7 @@ canvas.addEventListener('pointercancel', endDrag);
 // ---------- UI wiring ----------
 document.querySelectorAll('#types button').forEach(b => b.onclick = () => {
   if (!myTurn()) return;
-  S.types[S.turn] = b.dataset.t; archers[S.turn].pose(S.aim.pitch, S.aim.yaw, 0, true, b.dataset.t); updateHud();
+  S.types[S.turn] = b.dataset.t; archers[S.turn].pose(S.aim.pitch, 0, true, b.dataset.t); updateHud();
 });
 document.querySelectorAll('#arenas button').forEach(b => b.onclick = () => {
   S.arenaChoice = b.dataset.a;
@@ -309,7 +315,7 @@ function net() {
   sock.on('created', ({ code }) => { $('#code').textContent = code; show('#home', false); show('#lobby', true); });
   sock.on('joinError', msg => { $('#homeMsg').textContent = msg; });
   sock.on('start', ({ arena: id, you, hp, merlons, turn, wind }) => startMatch({ arenaId: id, mode: 'online', me: you, hp, merlons, turn, wind }));
-  sock.on('aim', a => { if (S.mode === 'online' && S.phase === 'aim' && S.turn !== S.me) archers[S.turn].pose(a.pitch, a.yaw, a.draw, true, S.types[S.turn]); });
+  sock.on('aim', a => { if (S.mode === 'online' && S.phase === 'aim' && S.turn !== S.me) archers[S.turn].pose(a.pitch, a.draw, true, S.types[S.turn]); });
   sock.on('shot', m => { if (S.mode === 'online') playShot(m); });
   sock.on('rematchAsk', () => { $('#overMsg').textContent = 'Opponent wants a rematch!'; });
   sock.on('opponentLeft', () => notice('Opponent left'));
@@ -336,18 +342,15 @@ function updateHud() {
   });
   $('#turn').textContent = online ? (S.turn === S.me ? 'Your turn' : `${NAMES[S.turn]}'s turn`) : `${NAMES[S.turn]}'s turn`;
   $('#turn').className = S.turn ? 'red' : 'blue';
-  $('#windNum').textContent = Math.hypot(S.wind.x, S.wind.z).toFixed(1);
+  const along = S.wind.x * archers[S.turn].f, w = Math.abs(S.wind.x); // wind is only ever along the shot line
+  $('#windNum').textContent = w < 0.05 ? 'Calm' : `${along > 0 ? 'Tail' : 'Head'} ${w.toFixed(1)}`;
+  $('#windNum').style.color = w < 0.05 ? '' : along > 0 ? '#2f9a22' : '#d0251c'; // tail helps (green), head hurts (red)
+  $('#windFlag').style.transform = `scaleX(${S.wind.x * archers[viewer()].f >= 0 ? 1 : -1})`; // flag points away from you = blowing toward the enemy
   const mine = myTurn();
   show('#types', mine);
   document.querySelectorAll('#types button').forEach(b => b.classList.toggle('on', b.dataset.t === S.types[S.turn]));
-  $('#hint').textContent = S.phase === 'aim' && S.draw === 0 ? (mine ? 'Drag down to draw · left/right to aim' : 'Opponent is aiming…') : '';
+  $('#hint').textContent = S.phase === 'aim' && S.draw === 0 ? (mine ? 'Pull back: longer = power, steeper = higher' : 'Opponent is aiming…') : '';
   $('#muteBtn').textContent = `Sound: ${sfx.isMuted() ? 'off' : 'on'}`;
-}
-function updateWindArrow() {
-  const c = archers[S.turn].root.position.clone().add(new V(0, 2, 0));
-  const a = c.clone().project(camera), b = c.clone().add(new V(S.wind.x, 0, S.wind.z).normalize().multiplyScalar(4)).project(camera);
-  const ang = Math.atan2(-(b.y - a.y) / camera.aspect, b.x - a.x), left = Math.cos(ang) < 0; // flag flies the way the wind blows on screen
-  $('#windFlag').style.transform = `scaleX(${left ? -1 : 1}) rotate(${clamp(Math.atan2(Math.sin(ang), Math.abs(Math.cos(ang))) * -0.5, -0.5, 0.5)}rad)`;
 }
 
 // ---------- camera ----------
@@ -397,7 +400,6 @@ function frame() {
     Object.assign(f.el.style, { left: `${(s.x + 1) / 2 * innerWidth}px`, top: `${(1 - s.y) / 2 * innerHeight}px`, opacity: String(Math.max(0, 1 - f.t / 1.4)) });
     if (f.t > 1.4) { f.el.remove(); floats.splice(i, 1); }
   }
-  if (S.phase !== 'menu') updateWindArrow();
   renderer.setViewport(0, 0, innerWidth, innerHeight);
   effect.render(scene, camera);
   const pip = S.phase === 'aim' || S.phase === 'wait';
@@ -425,16 +427,17 @@ window.__game = {
   simulate: (aim, type = 'normal') => simulateShot(world, S.turn, aim, S.wind, type, S.merlons),
   setWind: (x, z) => { S.wind = { x, z }; updateHud(); },
   merlons: () => ({ hp: [...S.merlons], vis: arena.merlonState() }),
-  findMerlonHit(id, type = 'normal') { // aim that hits a given merlon (or any, if id is undefined)
-    for (const pd of [25, 35, 15, 45]) for (let yaw = 0; yaw <= 0.25; yaw += 0.005) for (const ys of [1, -1]) for (let pw = 0.4; pw <= 1; pw += 0.004) {
-      const aim = { pitch: pd * DEG, yaw: yaw * ys, power: pw }, r = simulateShot(world, S.turn, aim, S.wind, type, S.merlons).arrows[0].res;
-      if (r.kind === 'merlon' && (id === undefined || r.merlon === id)) return { aim, merlon: r.merlon };
+  findMerlonHit(ids, type = 'split') { // aim whose arrows (split side arrows) hit one of the given merlon ids
+    ids = [].concat(ids);
+    for (let pd = 10; pd <= 65; pd += 1.5) for (let pw = 0.4; pw <= 1; pw += 0.005) {
+      const aim = { pitch: pd * DEG, power: pw };
+      for (const { res: r } of simulateShot(world, S.turn, aim, S.wind, type, S.merlons).arrows) if (r.kind === 'merlon' && ids.includes(r.merlon)) return { aim, merlon: r.merlon };
     }
     return null;
   },
   findHit(type = 'normal') { // search for a body hit with the current wind
-    for (const pd of [35, 25, 45]) for (let yaw = 0; yaw <= 0.2; yaw += 0.01) for (const ys of [1, -1]) for (let pw = 0.4; pw <= 1; pw += 0.004) {
-      const aim = { pitch: pd * DEG, yaw: yaw * ys, power: pw }, r = simulateShot(world, S.turn, aim, S.wind, type, S.merlons).arrows[0].res;
+    for (const pd of [35, 25, 45, 55, 15]) for (let pw = 0.4; pw <= 1; pw += 0.002) {
+      const aim = { pitch: pd * DEG, power: pw }, r = simulateShot(world, S.turn, aim, S.wind, type, S.merlons).arrows[0].res;
       if (r.kind === 'body') return aim;
     }
     return null;
