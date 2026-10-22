@@ -4,7 +4,7 @@ const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
 
-const BUILD = 'ad3t-v2';
+const BUILD = 'ad3t-v3';
 const app = express();
 app.get('/health', (req, res) => res.json({ ok: true, build: BUILD, rooms: rooms.size }));
 app.use('/vendor', express.static(path.join(__dirname, 'node_modules/three/build')));
@@ -17,8 +17,8 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, Number(v) || 0));
 
 import('./public/sim.js').then(sim => {
   const start = r => {
-    Object.assign(r, { hp: [sim.HP, sim.HP], winner: -1, wind: sim.randomWind(), votes: new Set() });
-    r.socks.forEach((s, i) => s.emit('start', { arena: r.arena, you: i, hp: r.hp, turn: r.turn, wind: r.wind }));
+    Object.assign(r, { hp: [sim.HP, sim.HP], merlons: sim.fullMerlons(), winner: -1, wind: sim.randomWind(), votes: new Set() });
+    r.socks.forEach((s, i) => s.emit('start', { arena: r.arena, you: i, hp: r.hp, merlons: r.merlons, turn: r.turn, wind: r.wind }));
   };
   const leave = sock => {
     const r = sock.data.room;
@@ -52,11 +52,11 @@ import('./public/sim.js').then(sim => {
       const r = sock.data.room, i = sock.data.idx;
       if (!r || !r.socks[1] || r.winner >= 0 || r.turn !== i) return; // only the active player may shoot
       const a = { pitch: clamp(aim.pitch, -0.3, 1.45), yaw: clamp(aim.yaw, -0.25, 0.25), power: clamp(aim.power, 0.1, 1) };
-      const shot = sim.simulateShot(r.world, i, a, r.wind, type);
-      r.hp = sim.applyDamage(r.hp, shot);
+      const shot = sim.simulateShot(r.world, i, a, r.wind, type, r.merlons);
+      ({ hp: r.hp, merlons: r.merlons } = sim.applyShot(r.hp, r.merlons, shot)); // server tracks HP and destroyed merlons
       r.winner = sim.winnerOf(r.hp);
       r.turn = 1 - i; r.wind = sim.randomWind();
-      io.to(r.code).emit('shot', { shooter: i, aim: a, sim: shot, hp: r.hp, turn: r.turn, wind: r.wind, winner: r.winner });
+      io.to(r.code).emit('shot', { shooter: i, aim: a, sim: shot, hp: r.hp, merlons: r.merlons, turn: r.turn, wind: r.wind, winner: r.winner });
     });
     sock.on('rematch', () => {
       const r = sock.data.room;

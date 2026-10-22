@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="build" content="ad3t-v2">
-<title>Archery Duel 3D</title>
+<meta name="build" content="ad3t-v3">
+<title>Archery Duel 3D: Castle Siege</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Ctext y=%2214%22 font-size=%2214%22%3E%F0%9F%8F%B9%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
 <script src="/socket.io/socket.io.min.js"></script>
@@ -27,13 +27,14 @@
 </div>
 
 <div id="home" class="panel">
-  <h1>Archery Duel 3D</h1>
-  <div class="chips" id="arenas"><button data-a="random" class="on">Random</button><button data-a="meadow">Meadow</button><button data-a="canyon">Canyon</button><button data-a="peaks">Peaks</button></div>
+  <h1>Archery Duel</h1>
+  <div class="sub">~ Castle Siege ~</div>
+  <div class="chips" id="arenas"><button data-a="random" class="on">Random</button><button data-a="field">Green Field</button><button data-a="dusk">Stormy Dusk</button><button data-a="winter">Winter Siege</button></div>
   <button id="hotBtn">Hot-seat (one device)</button>
   <button id="createBtn">Create room</button>
   <div class="row"><input id="codeIn" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false"><button id="joinBtn">Join room</button></div>
   <div id="homeMsg" class="msg"></div>
-  <div class="build">ad3t-v2</div>
+  <div class="build">ad3t-v3</div>
 </div>
 <div id="lobby" class="panel hidden">
   <h2>Room code</h2>
@@ -43,8 +44,8 @@
   <button id="cancelBtn">Cancel</button>
 </div>
 <div id="menu" class="panel hidden">
-  <h2>Archery Duel 3D</h2>
-  <p>Drag <b>down</b> anywhere to draw the bow: further = longer shot. Drag <b>left/right</b> to aim sideways. Release to shoot. Watch the wind flags. Pick an arrow: <b>Normal</b> 25 / head 50, <b>Heavy</b> 35 / 70 (drops faster, ignores most wind), <b>Split</b> splits into 3 at the top of its arc, 15 / 30 each.</p>
+  <h2>Castle Siege</h2>
+  <p>Drag <b>down</b> anywhere to draw the bow: further = longer shot. Drag <b>left/right</b> to aim sideways. Release to shoot. Watch the banners for wind. Arrows chip the merlons beside you (2 hits, or 1 heavy arrow, knocks one off), so your cover can crumble. Pick an arrow: <b>Normal</b> 25 / head 50, <b>Heavy</b> 35 / 70 (drops faster, ignores most wind), <b>Split</b> splits into 3 at the top of its arc, 15 / 30 each.</p>
   <button id="muteBtn">Sound: on</button>
   <button id="restart">Restart match</button>
   <button id="homeBtn">Main menu</button>

@@ -38,3 +38,18 @@ export const whoosh = d => ok() && hiss(Math.max(0.4, d), 0.12, 'bandpass', 500,
 export const thunk = () => { if (!ok()) return; osc('sine', 140, 45, 0.16, 0.6); hiss(0.06, 0.25, 'lowpass', 900, 300); };
 export const grunt = () => { if (!ok()) return; osc('sawtooth', 180, 105, 0.28, 0.3, bp(650, 3)); thunk(); };
 export const ding = () => { if (!ok()) return; osc('sine', 1318, 1310, 0.9, 0.22); osc('sine', 1976, 1970, 0.7, 0.12); };
+// castle flavour
+export const crack = () => { if (!ok()) return; hiss(0.12, 0.45, 'highpass', 2500, 900); osc('square', 90, 40, 0.12, 0.25, bp(400, 2)); };
+export const crumble = () => { if (!ok()) return; hiss(0.9, 0.5, 'lowpass', 1400, 120, 1, 0.01); osc('sine', 70, 30, 0.5, 0.5); };
+export const thunder = () => ok() && hiss(2.2, 0.6, 'lowpass', 400, 60, 1, 0.05);
+export function fanfare() { // horn call + crowd cheer on victory
+  if (!ok()) return;
+  const t0 = ctx.currentTime;
+  [[392, 0], [523, 0.22], [659, 0.44], [784, 0.66]].forEach(([f, d]) => {
+    const o = ctx.createOscillator(), g = ctx.createGain(), b = bp(f * 2, 1.5);
+    o.type = 'sawtooth'; o.frequency.value = f;
+    g.gain.setValueAtTime(0.0001, t0 + d); g.gain.exponentialRampToValueAtTime(0.18, t0 + d + 0.04); g.gain.exponentialRampToValueAtTime(0.0001, t0 + d + (d > 0.6 ? 0.9 : 0.3));
+    o.connect(b); b.connect(g); g.connect(master); o.start(t0 + d); o.stop(t0 + d + 1);
+  });
+  hiss(2.2, 0.16, 'bandpass', 900, 1200, 0.8, 0.4);
+}

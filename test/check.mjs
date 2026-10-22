@@ -2,7 +2,7 @@
 import { createRequire } from 'module';
 import fs from 'fs';
 const puppeteer = createRequire('/tmp/ad3t-pw/')('puppeteer-core');
-const [,, base = 'http://localhost:3917', out = 'shots', which = 'all'] = process.argv;
+const [,, base = 'http://localhost:3931', out = 'shots', which = 'all'] = process.argv;
 fs.mkdirSync(out, { recursive: true });
 const b = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', headless: 'new', args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required'] });
 const errors = [];
@@ -25,7 +25,7 @@ if (which !== 'online') {
   for (const [w, h, touch] of [[390, 844, true], [1280, 800, false]]) {
     const pg = await open(w, h, touch);
     await pg.screenshot({ path: `${out}/${w}-menu.png` });
-    for (const arena of ['meadow', 'canyon', 'peaks']) {
+    for (const arena of ['field', 'dusk', 'winter']) {
       await pg.click(`#arenas button[data-a="${arena}"]`);
       await pg.click('#hotBtn'); await sleep(1500);
       const cx = w / 2, cy = h * 0.3;
@@ -47,7 +47,19 @@ if (which !== 'online') {
   }
   // hot-seat full cycle with each arrow type
   const pg = await open(390, 844, true);
-  await pg.click('#arenas button[data-a="meadow"]'); await pg.click('#hotBtn'); await sleep(800);
+  await pg.click('#arenas button[data-a="field"]'); await pg.click('#hotBtn'); await sleep(800);
+  // merlon: Blue knocks off a Red merlon with a heavy arrow, Red cracks a Blue merlon with a normal one
+  for (const [ids, type, want] of [[[8, 9, 7, 10], 'heavy', 0], [[3, 2, 4, 1], 'normal', 1]]) {
+    let hit = null;
+    for (const id of ids) if ((hit = await pg.evaluate((i, t) => __game.findMerlonHit(i, t), id, type))) break;
+    assert(hit, 'found merlon aim');
+    await pg.evaluate((a, t) => __game.shootAim(a, t), hit.aim, type);
+    await settle(pg); await sleep(600);
+    const m = await pg.evaluate(() => __game.merlons());
+    console.log('hot merlon', hit.merlon, type, '-> hp', m.hp[hit.merlon], m.vis[hit.merlon]);
+    assert(m.hp[hit.merlon] === want && m.vis[hit.merlon].hp === want, 'merlon state');
+    if (want === 0) { assert(m.vis[hit.merlon].fallen, 'merlon fell'); await pg.screenshot({ path: `${out}/hot-merlon-off.png` }); }
+  }
   const types = ['normal', 'heavy', 'split', 'normal', 'heavy', 'normal', 'heavy', 'normal'];
   let shotN = 0;
   for (const type of types) {
@@ -77,7 +89,7 @@ if (which !== 'hot') {
   // two clients in separate browser contexts
   const A = await open(390, 844, true, await b.createBrowserContext());
   const B = await open(1280, 800, false, await b.createBrowserContext());
-  await A.click('#arenas button[data-a="canyon"]');
+  await A.click('#arenas button[data-a="dusk"]');
   await A.click('#createBtn');
   await A.waitForFunction(() => /^[A-Z0-9]{4}$/.test(document.querySelector('#code').textContent), { timeout: 15000 });
   const code = await A.$eval('#code', e => e.textContent);
@@ -90,15 +102,28 @@ if (which !== 'hot') {
   await B.waitForFunction(() => __game.S.mode === 'online' && __game.S.phase === 'aim', { timeout: 15000 });
   const [sa, sb] = [await st(A), await st(B)];
   console.log('started', sa, sb);
-  assert(sa.arena === 'canyon' && sb.arena === 'canyon', 'arena synced');
+  assert(sa.arena === 'dusk' && sb.arena === 'dusk', 'arena synced');
   assert(await A.evaluate(() => __game.S.me) === 0 && await B.evaluate(() => __game.S.me) === 1, 'seats');
   await sleep(800);
   await A.screenshot({ path: `${out}/online-A-aim.png` });
   await B.screenshot({ path: `${out}/online-B-wait.png` });
   // non-active player cannot shoot
   assert(await B.evaluate(() => __game.shootAim({ pitch: 0.5, yaw: 0, power: 0.8 })) === false, 'B blocked on A turn');
+  // merlon destruction sync: A cracks a Red merlon, B knocks a Blue merlon off with a heavy arrow
+  for (const [P, ids, type, want] of [[A, [8, 9, 7, 10], 'normal', 1], [B, [3, 2, 4, 1], 'heavy', 0]]) {
+    let hit = null;
+    for (const id of ids) if ((hit = await P.evaluate((i, t) => __game.findMerlonHit(i, t), id, type))) break;
+    assert(hit, 'found merlon aim online');
+    assert(await P.evaluate((a, t) => __game.shootAim(a, t), hit.aim, type), 'merlon shot accepted');
+    await sleep(500); await settle(A); await settle(B); await sleep(700);
+    const [ma, mb] = [await A.evaluate(() => __game.merlons()), await B.evaluate(() => __game.merlons())];
+    console.log('online merlon', hit.merlon, type, 'A', ma.hp.join(''), 'B', mb.hp.join(''), 'fallen A/B', ma.vis[hit.merlon].fallen, mb.vis[hit.merlon].fallen);
+    assert(JSON.stringify(ma.hp) === JSON.stringify(mb.hp) && ma.hp[hit.merlon] === want, 'merlons in sync');
+    assert(ma.vis[hit.merlon].hp === want && mb.vis[hit.merlon].hp === want, 'merlon visuals in sync');
+    if (want === 0) { assert(ma.vis[hit.merlon].fallen && mb.vis[hit.merlon].fallen, 'fell on both'); await A.screenshot({ path: `${out}/online-A-merlon-off.png` }); }
+  }
   let n = 0;
-  while (n < 12) {
+  while (n < 14) {
     const s = await st(A);
     if (s.phase === 'over') break;
     const P = s.turn === 0 ? A : B, O = s.turn === 0 ? B : A;
