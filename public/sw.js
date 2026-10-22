@@ -1,8 +1,8 @@
 // Archery Duel 3D service worker. The server stamps the build into CACHE, so every deploy gets a fresh cache and the old one is deleted.
 const CACHE = 'ad3t-cache-__BUILD__';
-const SHELL = ['/', '/index.html', '/style.css', '/game.js', '/sim.js', '/world.js', '/looks.js', '/audio.js', '/manifest.webmanifest',
+const SHELL = ['/', '/index.html', '/style.css', '/game.js', '/sim.js', '/world.js', '/looks.js', '/audio.js', '/physics.js', '/specials.js', '/manifest.webmanifest',
   '/fonts/Fredoka-600.woff2', '/fonts/Fredoka-700.woff2', '/icons/icon-192.png', '/icons/icon-512.png',
-  '/vendor/three.module.js', '/vendor/three.core.js', '/vendor/jsm/effects/OutlineEffect.js', '/vendor/jsm/geometries/RoundedBoxGeometry.js'];
+  '/vendor/three.module.js', '/vendor/three.core.js', '/vendor/jsm/effects/OutlineEffect.js', '/vendor/jsm/geometries/RoundedBoxGeometry.js', '/vendor/cannon-es.js'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => Promise.all(SHELL.map(u => c.add(new Request(u, { cache: 'reload' })).catch(() => {})))).then(() => self.skipWaiting()));
 });

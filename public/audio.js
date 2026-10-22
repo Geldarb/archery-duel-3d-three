@@ -53,3 +53,20 @@ export function fanfare() { // horn call + crowd cheer on victory
   });
   hiss(2.2, 0.16, 'bandpass', 900, 1200, 0.8, 0.4);
 }
+// v5: physics towers + specials
+let lastCrunch = 0;
+export const crunch = (v = 1) => { // stone on stone (throttled: many blocks land at once)
+  if (!ok() || ctx.currentTime - lastCrunch < 0.07) return; lastCrunch = ctx.currentTime;
+  hiss(0.18 + 0.15 * v, 0.25 + 0.25 * v, 'lowpass', 1600, 200, 1, 0.004); osc('square', 85 + Math.random() * 40, 38, 0.14, 0.18 * v, bp(300, 1.5));
+};
+export const boom = () => { if (!ok()) return; hiss(1.6, 0.9, 'lowpass', 2400, 50, 0.7, 0.003); osc('sine', 120, 28, 1.1, 0.9); osc('sawtooth', 70, 30, 0.5, 0.25, bp(180, 1)); };
+export const pop = () => { if (!ok()) return; hiss(0.08, 0.5, 'highpass', 4000, 1500); osc('sine', 880, 1760, 0.15, 0.25); setTimeout(ding, 120); };
+export function whir(dur = 3) { // spinning wheels: rising then falling buzz with a rattle
+  if (!ok()) return;
+  const t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain(), f = bp(700, 2), lfo = ctx.createOscillator(), lg = ctx.createGain();
+  o.type = 'sawtooth'; o.frequency.setValueAtTime(90, t); o.frequency.exponentialRampToValueAtTime(320, t + 0.5); o.frequency.setValueAtTime(320, t + dur - 0.6); o.frequency.exponentialRampToValueAtTime(60, t + dur);
+  lfo.frequency.value = 24; lg.gain.value = 40; lfo.connect(lg); lg.connect(o.frequency);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.16, t + 0.3); g.gain.setValueAtTime(0.16, t + dur - 0.5); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(f); f.connect(g); g.connect(master); o.start(t); lfo.start(t); o.stop(t + dur + 0.05); lfo.stop(t + dur + 0.05);
+  hiss(dur, 0.08, 'bandpass', 2500, 1800, 3, 0.2);
+}

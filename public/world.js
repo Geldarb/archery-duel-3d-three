@@ -1,7 +1,7 @@
-// Cartoon castle arena: toon-shaded valley, winding river, round towers with destructible merlons, toy castles, tents, trebuchet, clouds, weather.
+// Cartoon castle arena: toon-shaded valley, winding river, stacked-block physics towers, toy castles, tents, trebuchet, clouds, weather.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { DIST, WALL_H, TOWER_R, RING_IN, BREAST, MERLON_H, MERLON_HP, MERLONS, merlonGeom, STATIC_GEOM } from './sim.js';
+import { LAYOUT } from './sim.js';
 
 // ---------- toon helpers (shared with game.js) ----------
 const grad = (() => { const t = new THREE.DataTexture(new Uint8Array([110, 175, 230, 255]), 4, 1, THREE.RedFormat); t.minFilter = t.magFilter = THREE.NearestFilter; t.needsUpdate = true; return t; })();
@@ -78,10 +78,10 @@ export function buildArena(scene, world, lights) {
     group.add(new THREE.Mesh(geo, noOutline(new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false }))));
   }
   // puffy clouds
-  const clouds = new THREE.Group(), cloudM = noOutline(toon(T.cloud, { fog: false, emissive: new THREE.Color(T.cloud).multiplyScalar(0.55) })), puff = new THREE.SphereGeometry(1, 18, 12);
+  const clouds = new THREE.Group(), cloudM = noOutline(toon(T.cloud, { fog: false, emissive: new THREE.Color(T.cloud).multiplyScalar(0.55) })), cloudGeo = new THREE.SphereGeometry(1, 18, 12);
   for (let k = 0; k < 14; k++) {
     const c = new THREE.Group(), a = k / 14 * Math.PI * 2 + Math.random() * 0.3, r = 150 + Math.random() * 50;
-    for (let j = 0; j < 6; j++) { const m = new THREE.Mesh(puff, cloudM), s = 5 + Math.random() * 5; m.scale.set(s * 1.2, s, s); m.position.set((j - 2.5) * 6 + Math.random() * 3, Math.random() * 4 - (Math.abs(j - 2.5) * 1.5), Math.random() * 4); c.add(m); }
+    for (let j = 0; j < 6; j++) { const m = new THREE.Mesh(cloudGeo, cloudM), s = 5 + Math.random() * 5; m.scale.set(s * 1.2, s, s); m.position.set((j - 2.5) * 6 + Math.random() * 3, Math.random() * 4 - (Math.abs(j - 2.5) * 1.5), Math.random() * 4); c.add(m); }
     c.position.set(Math.cos(a) * r, 42 + Math.random() * 34, Math.sin(a) * r); c.lookAt(0, c.position.y, 0); clouds.add(c);
   }
   group.add(clouds);
@@ -110,51 +110,57 @@ export function buildArena(scene, world, lights) {
   }
   const stoneM = toon(T.stone, { map: stoneTex() }), crackM = toon(new THREE.Color(T.stone).multiplyScalar(0.62), { map: stoneTex() });
   const snowM = toon(0xffffff), woodM = toon(0xa8662e), darkWood = toon(0x6b3f1d), stoneMat2 = toon(0xc7cad3);
-  // ---------- round towers (one per archer) ----------
-  const torches = [];
-  for (const s of [0, 1]) {
-    const cx = s ? DIST : -DIST;
-    const body = add(new THREE.CylinderGeometry(TOWER_R, TOWER_R + 0.35, WALL_H + 2, 36), stoneM.clone(), cx, WALL_H / 2 - 1, 0);
-    body.material.map = stoneTex().clone(); body.material.map.repeat.set(8, 3.5); body.material.map.needsUpdate = true;
-    add(new THREE.TorusGeometry(TOWER_R + 0.02, 0.14, 8, 40), stoneMat2, cx, WALL_H - 0.05, 0).rotation.x = Math.PI / 2;
-    const floor = add(new THREE.CircleGeometry(RING_IN + 0.05, 32), stoneM.clone(), cx, WALL_H + 0.01, 0); floor.rotation.x = -Math.PI / 2;
-    floor.material.map = stoneTex().clone(); floor.material.map.repeat.set(2, 2); floor.material.map.needsUpdate = true;
-    const prof = [[RING_IN, 0], [TOWER_R - 0.03, 0], [TOWER_R + 0.03, 0.08], [TOWER_R + 0.03, BREAST - 0.08], [TOWER_R - 0.05, BREAST], [RING_IN + 0.06, BREAST], [RING_IN, BREAST - 0.08]].map(([x, y]) => new THREE.Vector2(x, y));
-    add(new THREE.LatheGeometry(prof, 48), stoneMat2, cx, WALL_H, 0);
-    add(new THREE.BoxGeometry(0.08, 1.4, 0.9), toon(0x3a2a1a), cx + (s ? -1 : 1) * (TOWER_R + 0.33), 0.2, 0); // door
-    if (T.torch) {
-      add(new THREE.CylinderGeometry(0.05, 0.06, 0.9, 6), darkWood, cx, WALL_H + BREAST + 0.2, (s ? -1 : 1) * -2.25);
-      const flame = add(new THREE.ConeGeometry(0.14, 0.38, 7), noOutline(new THREE.MeshBasicMaterial({ color: 0xffb030 })), cx, WALL_H + BREAST + 0.85, (s ? -1 : 1) * -2.25);
-      torches.push({ flame, ph: Math.random() * 9 }); // no point light: it washed out the toon archers and costs phone GPU time
+  // ---------- towers: every block is a rigid body (physics.js drives the transforms) ----------
+  const torches = [], geoCache = {};
+  const blockGeo = h => geoCache[h] || (geoCache[h] = new RoundedBoxGeometry(h[0] * 2, h[1] * 2, h[2] * 2, 2, Math.min(0.09, h[1] * 0.4)));
+  const shade = (base, k) => new THREE.Color(base).multiplyScalar(0.86 + ((k * 37) % 11) / 11 * 0.16);
+  const kindCol = { wall: T.stone === 0xffffff ? 0xc9ccd6 : new THREE.Color(T.stone).multiplyScalar(0.85).getHex(), slab: 0xb59a76, merlon: 0xdfe2ea };
+  const blocks = LAYOUT.map((l, i) => {
+    const m = add(blockGeo(l.half), toon(shade(kindCol[l.kind], i)), ...l.pos);
+    if (T.snow && l.kind !== 'wall') add(new RoundedBoxGeometry(l.half[0] * 2 + 0.06, 0.1, l.half[2] * 2 + 0.06, 1, 0.04), snowM, 0, l.half[1] + 0.03, 0, m);
+    if (l.kind === 'wall' && l.pos[1] < 0.5 && Math.abs(l.pos[2]) < 0.1 && Math.sign(l.pos[0]) * (l.pos[0] - (l.s ? 15 : -15)) > 0) // door on the back face
+      add(new THREE.BoxGeometry(0.06, 0.8, 0.7), toon(0x3a2a1a), Math.sign(l.pos[0]) * (l.half[0] + 0.02), -0.05, 0, m);
+    if (T.torch && l.kind === 'merlon' && Math.abs(l.pos[2]) > 1 && Math.abs(l.pos[0] - (l.s ? 15 : -15)) < 0.1) {
+      add(new THREE.CylinderGeometry(0.05, 0.06, 0.7, 6), darkWood, 0, 0.6, 0, m);
+      const flame = add(new THREE.ConeGeometry(0.13, 0.34, 7), noOutline(new THREE.MeshBasicMaterial({ color: 0xffb030 })), 0, 1.1, 0, m);
+      torches.push({ flame, ph: Math.random() * 9 });
     }
-  }
-  const merlonGeo = new RoundedBoxGeometry(0.55, MERLON_H, 0.72, 3, 0.12);
-  for (const g of STATIC_GEOM) { const m = add(merlonGeo, stoneMat2, g.x, WALL_H + BREAST + MERLON_H / 2, g.z); m.rotation.y = -g.ang; if (T.snow) add(new RoundedBoxGeometry(0.6, 0.12, 0.78, 2, 0.05), snowM, 0, MERLON_H / 2 + 0.03, 0, m); }
-  const merlons = [];
-  for (let id = 0; id < MERLONS; id++) {
-    const g = merlonGeom(id), home = new THREE.Vector3(g.x, WALL_H + BREAST + MERLON_H / 2, g.z);
-    const m = add(merlonGeo, stoneMat2, home.x, home.y, home.z); m.rotation.y = -g.ang;
-    if (T.snow) add(new RoundedBoxGeometry(0.6, 0.12, 0.78, 2, 0.05), snowM, 0, MERLON_H / 2 + 0.03, 0, m);
-    merlons.push({ m, home, rot: -g.ang, out: new THREE.Vector3(Math.cos(g.ang), 0, Math.sin(g.ang)), hp: MERLON_HP });
-  }
-  const debris = [];
-  const chunkGeo = new RoundedBoxGeometry(0.2, 0.16, 0.18, 1, 0.04);
+    return m;
+  });
+  function setBlocks(b) { b.forEach((q, i) => { blocks[i].position.set(q[0], q[1], q[2]); blocks[i].quaternion.set(q[3], q[4], q[5], q[6]); }); }
+  // ---------- effects: chunks, dust, explosions, sparks ----------
+  const debris = [], fx = [];
+  const chunkGeo = new RoundedBoxGeometry(0.2, 0.16, 0.18, 1, 0.04), puffGeo = new THREE.IcosahedronGeometry(1, 1);
+  const dustM = noOutline(toon(T.snow ? 0xffffff : 0xd8c8a8, { transparent: true, opacity: 0.85 })), smokeM = noOutline(toon(0x6a6670, { transparent: true, opacity: 0.9 }));
+  const fireM = noOutline(new THREE.MeshBasicMaterial({ color: 0xffc14a, transparent: true, opacity: 1, depthWrite: false })), sparkM = noOutline(new THREE.MeshBasicMaterial({ color: 0xffe066 }));
   function chunks(pos, n, out) {
     for (let k = 0; k < n; k++) {
-      const c = add(chunkGeo, crackM, pos.x, pos.y, pos.z);
-      debris.push({ o: c, v: out.clone().multiplyScalar(1 + Math.random() * 2).add(new THREE.Vector3((Math.random() - 0.5) * 2, 2 + Math.random() * 2, (Math.random() - 0.5) * 2)), spin: Math.random() * 8, chunk: true });
+      const c = add(chunkGeo, crackM, pos.x, pos.y, pos.z); c.scale.setScalar(0.6 + Math.random() * 0.8);
+      debris.push({ o: c, v: out.clone().multiplyScalar(1 + Math.random() * 2).add(new THREE.Vector3((Math.random() - 0.5) * 2, 2 + Math.random() * 2, (Math.random() - 0.5) * 2)), spin: Math.random() * 8, life: 6 });
     }
   }
-  function setMerlon(id, hp, animate) {
-    const M = merlons[id], m = M.m;
-    if (hp === M.hp) return;
-    if (hp >= MERLON_HP) { group.attach(m); m.position.copy(M.home); m.rotation.set(0, M.rot, 0); m.scale.set(1, 1, 1); m.material = stoneMat2; m.visible = true; }
-    else if (hp === 1) { // cracked: chipped and darker, chunks fly off
-      m.material = crackM; m.scale.set(0.9, 0.72, 0.85); m.position.y = M.home.y - 0.11; m.rotation.set(0.06, M.rot + 0.08, -0.05);
-      if (animate) chunks(M.home.clone().add(new THREE.Vector3(0, 0.35, 0)), 5, M.out);
-    } else if (animate) { m.material = crackM; debris.push({ o: m, v: M.out.clone().multiplyScalar(2).add(new THREE.Vector3(0, 2.5, 0)), spin: 5 }); chunks(M.home, 7, M.out); }
-    else m.visible = false;
-    M.hp = hp;
+  function puff(pos, n, size = 0.4, m = dustM, spread = 0.6, rise = 0.6, life = 1.1) {
+    for (let k = 0; k < n; k++) {
+      const o = new THREE.Mesh(puffGeo, m.clone()); o.position.copy(pos).add(new THREE.Vector3((Math.random() - 0.5) * spread, Math.random() * spread * 0.5, (Math.random() - 0.5) * spread));
+      o.scale.setScalar(size * (0.6 + Math.random() * 0.6)); group.add(o);
+      fx.push({ o, t: 0, life: life * (0.7 + Math.random() * 0.6), grow: 1.8, v: new THREE.Vector3((Math.random() - 0.5) * spread * 2, rise * (0.5 + Math.random()), (Math.random() - 0.5) * spread * 2) });
+    }
+  }
+  function explode(pos) { // flash + fireball + smoke + debris
+    const fl = new THREE.Mesh(puffGeo, fireM.clone()); fl.position.copy(pos); fl.scale.setScalar(0.5); group.add(fl);
+    fx.push({ o: fl, t: 0, life: 0.45, grow: 9, v: new THREE.Vector3() });
+    puff(pos, 8, 0.7, noOutline(new THREE.MeshBasicMaterial({ color: 0xff7a1a, transparent: true, depthWrite: false })), 1.2, 1.5, 0.55);
+    puff(pos, 14, 0.8, smokeM, 2.2, 1.6, 2.2);
+    chunks(pos, 16, new THREE.Vector3(0, 2, 0));
+    for (let k = 0; k < 16; k++) { const d = new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.8, Math.random() - 0.5).normalize(); chunks(pos.clone().addScaledVector(d, 0.4), 1, d.multiplyScalar(4)); }
+  }
+  const sparkGeo = new THREE.BoxGeometry(0.05, 0.05, 0.22);
+  function sparks(pos, n = 4) {
+    for (let k = 0; k < n; k++) {
+      const o = new THREE.Mesh(sparkGeo, sparkM), a = Math.random() * Math.PI * 2, v = new THREE.Vector3(Math.cos(a) * 5, 1.5 + Math.random() * 2.5, Math.sin(a) * 5);
+      o.position.copy(pos); o.lookAt(pos.clone().add(v)); group.add(o);
+      fx.push({ o, t: 0, life: 0.35, grow: 0, v, g: true });
+    }
   }
   // ---------- toy castles behind each archer (red behind Red, blue behind Blue) with waving flags ----------
   const flags = [];
@@ -185,7 +191,12 @@ export function buildArena(scene, world, lights) {
   }
   // ---------- field props ----------
   const trunkM = toon(0x8a5a2b), crownMs = T.crowns.map(c => toon(c)), crownGeo = new THREE.IcosahedronGeometry(1, 2), trunkGeo = new THREE.CylinderGeometry(0.16, 0.24, 1, 8);
-  function tree(x, y, z, s, k) { add(trunkGeo, trunkM, x, y + 0.8 * s, z).scale.set(s, 1.6 * s, s); add(crownGeo, crownMs[k % 3], x, y + 2.5 * s, z).scale.setScalar(1.15 * s); }
+  const fadeTrees = []; // near trees get their own materials so the camera can see through them
+  function tree(x, y, z, s, k) {
+    const mats = [trunkM.clone(), crownMs[k % 3].clone()];
+    add(trunkGeo, mats[0], x, y + 0.8 * s, z).scale.set(s, 1.6 * s, s); add(crownGeo, mats[1], x, y + 2.5 * s, z).scale.setScalar(1.15 * s);
+    fadeTrees.push({ c: new THREE.Vector3(x, y + 2.2 * s, z), r: 1.5 * s, mats });
+  }
   world.trees.forEach((t, k) => tree(t.x, t.y, t.z, t.s, k));
   { // background lollipop trees, instanced
     const n = 70, tr = new THREE.InstancedMesh(trunkGeo, trunkM, n), cr = new THREE.InstancedMesh(crownGeo, toon(0xffffff), n), m4 = new THREE.Matrix4(), col = new THREE.Color();
@@ -222,15 +233,14 @@ export function buildArena(scene, world, lights) {
   scene.add(group);
 
   return {
+    fadeTrees,
     setTeamColors(cols) { cols.forEach((c, s) => { teamFlag[s].color.setHex(c); teamRoof[s].color.setHex(c); }); },
-    setMerlon,
-    resetMerlons(hp) {
-      for (const d of debris) if (d.chunk) d.o.removeFromParent();
-      debris.length = 0;
-      hp.forEach((h, id) => { setMerlon(id, MERLON_HP, false); setMerlon(id, h, false); });
+    setBlocks, blockMesh: i => blocks[i], blocks, chunks, puff, explode, sparks, group,
+    resetBlocks(b) {
+      for (const d of debris) d.o.removeFromParent();
+      for (const f of fx) f.o.removeFromParent();
+      debris.length = 0; fx.length = 0; setBlocks(b);
     },
-    merlonMesh: id => merlons[id].m,
-    merlonState: () => merlons.map(M => ({ hp: M.hp, visible: M.m.visible, fallen: M.m.position.distanceTo(M.home) > 1 })),
     update(dt, t, wind, cam, sfx) {
       const s = Math.hypot(wind.x, wind.z), ang = Math.atan2(-wind.z, wind.x);
       for (const f of flags) {
@@ -242,11 +252,21 @@ export function buildArena(scene, world, lights) {
       clouds.rotation.y = t * 0.004;
       if (!T.snow) sparkle.material.opacity = 0.45 + 0.45 * Math.abs(Math.sin(t * 2.3));
       for (const tc of torches) { const f = 0.75 + 0.25 * Math.sin(t * 13 + tc.ph) * Math.sin(t * 7.3 + tc.ph * 2); tc.flame.scale.set(1, f * 1.2, 1); }
-      for (const d of debris) {
+      for (let i = debris.length - 1; i >= 0; i--) { // chunks bounce once, rest, then shrink away
+        const d = debris[i];
+        if ((d.life -= dt) < 1) { d.o.scale.multiplyScalar(Math.max(0, 1 - dt * 3)); if (d.life <= 0) { d.o.removeFromParent(); debris.splice(i, 1); continue; } }
         if (!d.v) continue;
         d.v.y -= 9.8 * dt; d.o.position.addScaledVector(d.v, dt); d.o.rotation.x += d.spin * dt; d.o.rotation.z += d.spin * 0.7 * dt;
-        const floor = world.groundH(d.o.position.x, d.o.position.z);
-        if (d.o.position.y < floor + 0.12) { d.o.position.y = floor + 0.12; d.v = null; }
+        const floor = Math.max(0, world.groundH(d.o.position.x, d.o.position.z));
+        if (d.o.position.y < floor + 0.08) { d.o.position.y = floor + 0.08; d.v = null; }
+      }
+      for (let i = fx.length - 1; i >= 0; i--) { // puffs / flashes / sparks
+        const f = fx[i], u = (f.t += dt) / f.life;
+        if (u >= 1) { f.o.removeFromParent(); f.o.material !== sparkM && f.o.material.dispose(); fx.splice(i, 1); continue; }
+        if (f.g) f.v.y -= 9.8 * dt;
+        f.o.position.addScaledVector(f.v, dt); f.v.multiplyScalar(Math.exp(-dt * (f.g ? 0.5 : 2.5)));
+        if (f.grow) f.o.scale.multiplyScalar(1 + f.grow * dt * (1 - u));
+        if (f.o.material.transparent) f.o.material.opacity = (1 - u) * (f.o.material === fireM ? 1 : 0.9);
       }
       if (weather) {
         const a = weather.geometry.attributes.position, rain = T.weather === 'rain', fall = rain ? 16 : 1.3;

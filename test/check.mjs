@@ -18,7 +18,7 @@ async function open(w, h, touch, ctx = b, url = base) {
   await sleep(800);
   return pg;
 }
-const st = pg => pg.evaluate(() => ({ turn: __game.S.turn, phase: __game.S.phase, hp: [...__game.S.hp], mode: __game.S.mode, arena: __game.S.arenaId, winner: __game.S.winner, score: [...__game.S.score], best: __game.S.best, merl: __game.S.merlons.join('') }));
+const st = pg => pg.evaluate(() => ({ turn: __game.S.turn, phase: __game.S.phase, hp: [...__game.S.hp], mode: __game.S.mode, arena: __game.S.arenaId, winner: __game.S.winner, score: [...__game.S.score], best: __game.S.best, fresh: __game.blocks().every((b, i) => Math.hypot(b[0] - __game.layout[i].pos[0], b[1] - __game.layout[i].pos[1], b[2] - __game.layout[i].pos[2]) < 1e-6) }));
 const done = pg => pg.waitForFunction(() => !__game.S.play && ['aim', 'over', 'round', 'menu'].includes(__game.S.phase), { timeout: 20000 });
 const settle = pg => pg.waitForFunction(() => ['aim', 'over', 'menu'].includes(__game.S.phase) && !__game.S.play, { timeout: 20000 });
 
@@ -32,11 +32,11 @@ if (which !== 'online') {
     const setName = async n => { await pg.click('#nameIn', { clickCount: 3 }); await pg.keyboard.press('Backspace'); await pg.type('#nameIn', n); };
     await setName('Robin <b>Hood</b> of Locksley'); await pg.click('#swColor button[data-v="green"]'); await cyc('helmet', 3); await cyc('emblem', 2); await cyc('bow', 2);
     await pg.click('#swFletch button[data-v="gold"]'); await cyc('taunt', 3); await sleep(900);
-    await pg.screenshot({ path: `${out}/custom-360-p1.png` });
+    await pg.screenshot({ captureBeyondViewport: false, path: `${out}/custom-360-p1.png` });
     await pg.click('#custom .tabs button[data-slot="1"]'); await sleep(200);
     await setName('Marian'); await pg.click('#swColor button[data-v="green"]'); await cyc('helmet', 4); await cyc('bow', 1); await cyc('emblem', 3);
     await pg.click('#swFletch button[data-v="pink"]'); await sleep(900);
-    await pg.screenshot({ path: `${out}/custom-360-p2.png` });
+    await pg.screenshot({ captureBeyondViewport: false, path: `${out}/custom-360-p2.png` });
     const fits = await pg.evaluate(() => { const r = document.querySelector('#custom').getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight && document.scrollingElement.scrollHeight <= innerHeight; });
     await pg.click('#customDone'); await sleep(300);
     await pg.reload({ waitUntil: 'networkidle0' }); await pg.waitForFunction('window.__ready'); await sleep(300);
@@ -49,22 +49,22 @@ if (which !== 'online') {
     assert(after.cols[0] !== after.cols[1], 'same colour auto-tinted');
     await pg.click('#arenas button[data-a="field"]'); await pg.click('#hotBtn'); await sleep(1500);
     await pg.mouse.move(195, 250); await pg.mouse.down(); await pg.mouse.move(235, 220, { steps: 5 }); await sleep(400);
-    await pg.screenshot({ path: `${out}/custom-match-390.png` });
+    await pg.screenshot({ captureBeyondViewport: false, path: `${out}/custom-match-390.png` });
     await pg.mouse.move(195, 252); await pg.mouse.up(); await settle(pg); await sleep(1600);
-    await pg.screenshot({ path: `${out}/custom-match-390-p2view.png` });
+    await pg.screenshot({ captureBeyondViewport: false, path: `${out}/custom-match-390-p2view.png` });
     const hud = await pg.evaluate(() => [document.querySelector('#hp0 .num').textContent, document.querySelector('#hp1 .num').textContent, document.querySelector('#turn').textContent]);
     console.log('hot HUD', hud);
-    assert(hud[0] === 'Robin Hoo 100' && hud[1] === 'Marian 100', 'names on HP bars');
+    assert(/^Robin Hoo \d+$/.test(hud[0]) && /^Marian \d+$/.test(hud[1]), 'names on HP bars');
     await pg.close();
     const pd = await open(1280, 800, false);
     await pd.click('#customBtn'); await sleep(900);
-    await pd.screenshot({ path: `${out}/custom-1280.png` });
+    await pd.screenshot({ captureBeyondViewport: false, path: `${out}/custom-1280.png` });
     assert(await pd.$eval('#nameIn', e => e.value) === 'Robin Hoo', 'name shown after reload');
     await pd.close();
   }
   for (const [w, h, touch] of [[360, 640, true], [1280, 800, false]]) {
     const pg = await open(w, h, touch);
-    await pg.screenshot({ path: `${out}/${w}-menu.png` });
+    await pg.screenshot({ captureBeyondViewport: false, path: `${out}/${w}-menu.png` });
     for (const arena of ['field', 'dusk', 'winter']) {
       await pg.click(`#arenas button[data-a="${arena}"]`);
       await pg.click('#hotBtn'); await sleep(1500);
@@ -72,11 +72,11 @@ if (which !== 'online') {
       await pg.mouse.move(cx, cy); await pg.mouse.down();
       await pg.mouse.move(cx + w * 0.1, cy - h * 0.06, { steps: 8 }); // up-right: a bit higher and stronger
       await sleep(400);
-      await pg.screenshot({ path: `${out}/${w}-aim-${arena}.png` });
+      await pg.screenshot({ captureBeyondViewport: false, path: `${out}/${w}-aim-${arena}.png` });
       await pg.mouse.up();
       await pg.waitForFunction(() => __game.S.phase === 'fly', { timeout: 3000 });
       await sleep(900);
-      await pg.screenshot({ path: `${out}/${w}-fly-${arena}.png` });
+      await pg.screenshot({ captureBeyondViewport: false, path: `${out}/${w}-fly-${arena}.png` });
       await settle(pg);
       const s = await st(pg);
       console.log(w, arena, 'drag shot ->', s);
@@ -115,7 +115,7 @@ if (which !== 'online') {
     // vertical split: screenshot shortly after the split, arrows must share z and spread in height
     await pg.evaluate(() => { __game.setWind(0, 0); __game.shootAim({ pitch: 40 / 57.3, power: 0.75 }, 'split'); });
     await pg.waitForFunction(() => __game.S.play && __game.S.play.arrows.length === 3 && __game.S.play.ft > __game.S.play.arrows[1].t0 + 0.55, { timeout: 10000, polling: 16 });
-    await pg.screenshot({ path: `${out}/split-vertical.png` });
+    await pg.screenshot({ captureBeyondViewport: false, path: `${out}/split-vertical.png` });
     const sp = await pg.evaluate(() => __game.S.play.arrows.map(a => a.m.position.toArray().map(v => +v.toFixed(2))));
     console.log('split arrows (x,y,z)', sp);
     assert(sp.every(p => p[2] === 0) && new Set(sp.map(p => p[1])).size === 3, 'split is vertical');
@@ -129,18 +129,6 @@ if (which !== 'online') {
     assert(lane.worst === 0, 'shots stay on the opponent line');
   }
   if ((await st(pg)).turn === 1) { await pg.evaluate(() => __game.shootAim({ pitch: 0.2, power: 0.25 }, 'normal')); await settle(pg); await sleep(300); }
-  // merlons in the line of fire: Blue cracks Red's front merlon (10) with a low normal shot, Red knocks Blue's front merlon (3) off with a heavy one
-  for (const [ids, type, want] of [[[10], 'normal', 1], [[3], 'heavy', 0]]) {
-    await pg.evaluate(() => __game.setWind(0, 0));
-    const hit = await pg.evaluate((i, t) => __game.findMerlonHit(i, t), ids, type);
-    assert(hit, 'found merlon aim');
-    await pg.evaluate((a, t) => __game.shootAim(a, t), hit.aim, type);
-    await settle(pg); await sleep(600);
-    const m = await pg.evaluate(() => __game.merlons());
-    console.log('hot merlon', hit.merlon, type, '-> hp', m.hp[hit.merlon], m.vis[hit.merlon]);
-    assert(m.hp[hit.merlon] === want && m.vis[hit.merlon].hp === want, 'merlon state');
-    if (want === 0) { assert(m.vis[hit.merlon].fallen, 'merlon fell'); await pg.screenshot({ path: `${out}/hot-merlon-off.png` }); }
-  }
   // play out a hot-seat Best of 3 with typed hit shots
   const types = ['normal', 'heavy', 'split', 'normal', 'heavy'];
   let shotN = 0, rounds = 0;
@@ -152,7 +140,7 @@ if (which !== 'online') {
     const aim = await pg.evaluate(t => __game.findHit(t), type);
     assert(aim, 'found a hitting aim for ' + type);
     await pg.evaluate((a, t) => __game.shootAim(a, t), aim, type);
-    if (shotN++ === 0) { await pg.waitForFunction(() => __game.S.play && __game.S.play.arrows.every(a => a.landed), { timeout: 10000 }); await sleep(150); await pg.screenshot({ path: `${out}/hot-hit.png` }); }
+    if (shotN++ === 0) { await pg.waitForFunction(() => __game.S.play && __game.S.play.arrows.every(a => a.landed), { timeout: 10000 }); await sleep(150); await pg.screenshot({ captureBeyondViewport: false, path: `${out}/hot-hit.png` }); }
     await done(pg);
     const after = await st(pg);
     console.log('hot', type, before.hp, '->', after.hp, 'turn', before.turn, '->', after.turn, after.phase, 'score', after.score.join('-'));
@@ -162,18 +150,18 @@ if (which !== 'online') {
       assert(after.score[0] + after.score[1] === rounds, 'round scored');
       const card = await pg.$eval('#roundCard', e => (e.classList.contains('hidden') ? '' : e.textContent));
       assert(/Round to/.test(card), 'round card shown');
-      if (rounds === 1) await pg.screenshot({ path: `${out}/hot-round-card.png` });
+      if (rounds === 1) await pg.screenshot({ captureBeyondViewport: false, path: `${out}/hot-round-card.png` });
       await settle(pg);
       const nx = await st(pg);
       console.log('hot next round', nx.score.join('-'), 'hp', nx.hp, 'turn', nx.turn, 'arena', nx.arena);
-      assert(nx.phase === 'aim' && nx.hp.join() === '100,100' && nx.turn === 1 - before.turn && nx.arena === 'field' && !nx.merl.includes('0') && !nx.merl.includes('1'), 'next round reset, loser first, same arena');
-      if (rounds === 1) await pg.screenshot({ path: `${out}/hot-score-pill.png` });
+      assert(nx.phase === 'aim' && nx.hp.join() === '100,100' && nx.turn === 1 - before.turn && nx.arena === 'field' && nx.fresh, 'next round reset, loser first, same arena');
+      if (rounds === 1) await pg.screenshot({ captureBeyondViewport: false, path: `${out}/hot-score-pill.png` });
     } else assert(after.phase === 'over' || after.turn !== before.turn, 'turn switched');
   }
   const fin = await st(pg);
   assert(fin.phase === 'over' && Math.max(...fin.score) === 2, 'hot-seat series over at 2 wins'); await sleep(400);
   console.log('hot series end:', await pg.$eval('#winner', e => e.textContent), '|', await pg.$eval('#overScore', e => e.textContent), '|', await pg.$eval('#rematch', e => e.textContent));
-  await pg.screenshot({ path: `${out}/hot-win.png` });
+  await pg.screenshot({ captureBeyondViewport: false, path: `${out}/hot-win.png` });
   await pg.click('#rematch'); await sleep(400);
   const re = await st(pg); assert(re.phase === 'aim' && re.hp[0] === 100 && re.hp[1] === 100 && re.score.join() === '0,0' && re.turn === 1 - fin.winner, 'rematch series reset');
   console.log('hot-seat Bo3 OK, final score', fin.score, 'winner', fin.winner);
@@ -201,7 +189,7 @@ if (which !== 'hot') {
     const clip = await A.evaluate(() => navigator.clipboard.readText().catch(e => 'ERR ' + e.message));
     console.log('share: navigator.share', hasShare, '| button', btn, '| clipboard', clip, '| msg', msg);
     assert(hasShare || clip === `${base}/?room=${code}` || msg.includes(`/?room=${code}`), 'share link is the room URL');
-    await A.screenshot({ path: `${out}/online-room-share.png` });
+    await A.screenshot({ captureBeyondViewport: false, path: `${out}/online-room-share.png` });
   }
   // B opens the share link: auto-joins with its saved look, no code entry
   await B.goto(`${base}/?room=${code}`, { waitUntil: 'networkidle0' });
@@ -223,24 +211,10 @@ if (which !== 'hot') {
     assert(ha.startsWith('Bella') && hb.startsWith('Archie'), 'opponent names on HP bars');
   }
   await sleep(800);
-  await A.screenshot({ path: `${out}/online-A-aim.png` });
-  await B.screenshot({ path: `${out}/online-B-wait.png` });
+  await A.screenshot({ captureBeyondViewport: false, path: `${out}/online-A-aim.png` });
+  await B.screenshot({ captureBeyondViewport: false, path: `${out}/online-B-wait.png` });
   // non-active player cannot shoot
   assert(await B.evaluate(() => __game.shootAim({ pitch: 0.5, power: 0.8 })) === false, 'B blocked on A turn');
-  // merlon destruction sync: A cracks Red's front merlon with a low normal shot, B knocks Blue's front merlon off with a heavy one
-  for (const [P, ids, type, want] of [[A, [10], 'normal', 1], [B, [3], 'heavy', 0]]) {
-    const hit = await P.evaluate((i, t) => __game.findMerlonHit(i, t), ids, type);
-    assert(hit, 'found merlon aim online');
-    const ok = await P.evaluate((a, t) => __game.shootAim(a, t), hit.aim, type);
-    if (!ok) console.log('not accepted', await st(A), await st(B), await P.evaluate(() => __game.S.me));
-    assert(ok, 'merlon shot accepted');
-    await sleep(500); await settle(A); await settle(B); await sleep(700);
-    const [ma, mb] = [await A.evaluate(() => __game.merlons()), await B.evaluate(() => __game.merlons())];
-    console.log('online merlon', hit.merlon, type, 'A', ma.hp.join(''), 'B', mb.hp.join(''), 'fallen A/B', ma.vis[hit.merlon].fallen, mb.vis[hit.merlon].fallen);
-    assert(JSON.stringify(ma.hp) === JSON.stringify(mb.hp) && ma.hp[hit.merlon] === want, 'merlons in sync');
-    assert(ma.vis.every((v, k) => v.hp === ma.hp[k]) && mb.vis.every((v, k) => v.hp === mb.hp[k]), 'merlon visuals in sync');
-    if (want === 0) { assert(ma.vis[hit.merlon].fallen && mb.vis[hit.merlon].fallen, 'fell on both'); await A.screenshot({ path: `${out}/online-A-merlon-off.png` }); }
-  }
   let n = 0, rounds = 0;
   while (n < 80) {
     const s = await st(A);
@@ -250,7 +224,7 @@ if (which !== 'hot') {
     assert(aim, 'found hit online');
     assert(await P.evaluate(a => __game.shootAim(a, 'normal'), aim), 'active player can shoot');
     await O.waitForFunction(() => __game.S.phase === 'fly', { timeout: 10000 });
-    if (n === 0) { await sleep(700); await B.screenshot({ path: `${out}/online-B-fly.png` }); }
+    if (n === 0) { await sleep(700); await B.screenshot({ captureBeyondViewport: false, path: `${out}/online-B-fly.png` }); }
     await done(A); await done(B);
     const [a2, b2] = [await st(A), await st(B)];
     console.log('online shot', n, 'by', s.turn, 'hp A', a2.hp, 'hp B', b2.hp, 'turn', a2.turn, b2.turn, a2.phase, b2.phase, 'score A', a2.score.join('-'), 'B', b2.score.join('-'));
@@ -261,15 +235,15 @@ if (which !== 'hot') {
     if (a2.phase === 'round') {
       rounds++;
       assert(a2.score[0] + a2.score[1] === rounds, 'round scored');
-      if (rounds === 1) await A.screenshot({ path: `${out}/online-A-round-card.png` });
+      if (rounds === 1) await A.screenshot({ captureBeyondViewport: false, path: `${out}/online-A-round-card.png` });
       await settle(A); await settle(B);
       const [a3, b3] = [await st(A), await st(B)];
-      console.log('online round', rounds, 'next: score', a3.score.join('-'), b3.score.join('-'), 'turn', a3.turn, b3.turn, 'hp', a3.hp, b3.hp, 'merlons', a3.merl, b3.merl, 'arena', a3.arena);
+      console.log('online round', rounds, 'next: score', a3.score.join('-'), b3.score.join('-'), 'turn', a3.turn, b3.turn, 'hp', a3.hp, b3.hp, 'fresh towers', a3.fresh, b3.fresh, 'arena', a3.arena);
       assert(a3.phase === 'aim' && b3.phase === 'aim' && a3.turn === 1 - s.turn && b3.turn === a3.turn, 'next round, loser first');
-      assert(a3.hp.join() === '100,100' && b3.hp.join() === '100,100' && a3.merl === '2'.repeat(14) && b3.merl === a3.merl && a3.arena === 'dusk', 'round reset, same arena');
+      assert(a3.hp.join() === '100,100' && b3.hp.join() === '100,100' && a3.fresh && b3.fresh && a3.arena === 'dusk', 'round reset, same arena');
       assert(a3.score.join() === b3.score.join() && a3.score.join() === a2.score.join(), 'score kept');
       if (rounds === 1) {
-        await sleep(600); await A.screenshot({ path: `${out}/online-A-score-pill.png` });
+        await sleep(600); await A.screenshot({ captureBeyondViewport: false, path: `${out}/online-A-score-pill.png` });
         console.log('pill A', await A.$eval('#score', e => e.textContent), '| pill B', await B.$eval('#score', e => e.textContent));
       }
     } else assert(a2.phase === 'over' || (a2.turn !== s.turn && a2.turn === b2.turn), 'turn passed');
@@ -280,12 +254,12 @@ if (which !== 'hot') {
   assert(fa.score.join() === fb.score.join() && Math.max(...fa.score) === 2, 'series over at 2 wins, same score');
   const [wa, wb] = [await A.$eval('#winner', e => e.textContent), await B.$eval('#winner', e => e.textContent)];
   console.log('series end screens:', wa, '|', wb, '|', await A.$eval('#overScore', e => e.textContent), '|', await A.$eval('#taunt', e => e.textContent), '| button', await A.$eval('#rematch', e => e.textContent));
-  await sleep(500); await A.screenshot({ path: `${out}/online-A-over.png` }); await B.screenshot({ path: `${out}/online-B-over.png` });
+  await sleep(500); await A.screenshot({ captureBeyondViewport: false, path: `${out}/online-A-over.png` }); await B.screenshot({ captureBeyondViewport: false, path: `${out}/online-B-over.png` });
   { // invalid and full room links
     const C = await open(360, 640, true, await b.createBrowserContext(), `${base}/?room=ZZZZ`);
     await C.waitForFunction(() => /Couldn't join/.test(document.querySelector('#homeMsg').textContent), { timeout: 10000 });
     const m1 = await C.$eval('#homeMsg', e => e.textContent), home = await C.$eval('#home', e => !e.classList.contains('hidden'));
-    await C.screenshot({ path: `${out}/invalid-link.png` });
+    await C.screenshot({ captureBeyondViewport: false, path: `${out}/invalid-link.png` });
     await C.goto(`${base}/?room=${code}`, { waitUntil: 'load' }); await C.waitForFunction('window.__ready', { timeout: 20000 });
     await C.waitForFunction(() => /Couldn't join/.test(document.querySelector('#homeMsg').textContent), { timeout: 10000 });
     const m2 = await C.$eval('#homeMsg', e => e.textContent);
@@ -307,7 +281,7 @@ if (which !== 'hot') {
   console.log('A notice:', await A.$eval('#noticeText', e => e.textContent));
   await A.click('#noticeBtn'); await sleep(300);
   assert((await st(A)).phase === 'menu', 'back to menu');
-  await A.screenshot({ path: `${out}/online-A-left.png` });
+  await A.screenshot({ captureBeyondViewport: false, path: `${out}/online-A-left.png` });
   console.log('online OK');
 }
 await b.close();

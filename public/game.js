@@ -1,8 +1,10 @@
-// Archery Duel 3D v4 — cartoon Castle Siege. Hot-seat + online rooms. Plain Three.js.
+// Archery Duel 3D v5 — cartoon Castle Siege with physics towers and sky power-ups. Hot-seat + online rooms. Plain Three.js.
 import * as THREE from 'three';
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { DIST, HP, ARROWS, ARENA_IDS, WALL_H, SHOULDER, seriesWinnerOf, makeWorld, simulateShot, applyShot, applyResult, fullMerlons, winnerOf, randomWind, launch, G } from './sim.js';
+import { HP, ARROWS, ARENA_IDS, SHOULDER, SPECIALS, LAYOUT, seriesWinnerOf, makeWorld, simulateShot, finishShot, newRound, rng, winnerOf, randomWind, launch, initialPhys, G } from './sim.js';
+import { PhysRun, shotEvents, STEP } from './physics.js';
+import { SPECIAL_UI, pickupModel } from './specials.js';
 import { buildArena, heraldry, toon, noOutline } from './world.js';
 import { PALETTE, FLETCH, HELMETS, EMBLEMS, BOWS, TAUNTS, sanitizeLook, teamColors, hexOf, cleanName } from './looks.js';
 import * as sfx from './audio.js';
@@ -35,6 +37,7 @@ function setLimb(mesh, a, b) {
   mesh.quaternion.setFromUnitVectors(new V(0, 1, 0), d.normalize());
 }
 function makeArrow(type = 'normal', fletch = 0xffffff) { // chunky cartoon arrow, tip at origin, points along +x; fletching in the player's colour
+  if (SPECIAL_UI[type]) { const sp = SPECIAL_UI[type].model(); sp.userData.special = type; sp.traverse(o => { o.castShadow = true; }); return sp; }
   const g = new THREE.Group(), heavy = type === 'heavy', r = heavy ? 0.04 : 0.028;
   const shaft = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.85, 6), mat(heavy ? 0x6b4423 : 0xc98a4b));
   shaft.rotation.z = Math.PI / 2; shaft.position.x = -0.5;
@@ -118,7 +121,7 @@ function makeArcher(i, look, color, parent = scene) { // chunky big-headed carto
   const handB = add(new THREE.SphereGeometry(0.085, 10, 8), leather, 0, 0, 0, aim);
   let nocked = makeArrow('normal', fletch); aim.add(nocked);
   root.rotation.y = i ? Math.PI : 0;
-  root.position.set(-f * DIST, WALL_H, 0);
+  root.position.set(...initialPhys().a[i]);
   parent.add(root);
   const a = {
     root, f, fletch,
@@ -128,7 +131,8 @@ function makeArcher(i, look, color, parent = scene) { // chunky big-headed carto
       const nx = tipX - 0.42 * draw, nock = new V(nx, 0, 0);
       stringGeo.attributes.position.setX(1, nx); stringGeo.attributes.position.needsUpdate = true;
       setLimb(armB, sBack, nock); handB.position.copy(nock);
-      nocked.visible = showArrow; nocked.position.set(nx + 0.92, 0, 0);
+      nocked.visible = showArrow; nocked.position.set(nx + (nocked.userData.special ? 0.25 : 0.92), 0, 0);
+      if (nocked.userData.special) nocked.scale.setScalar(0.6);
     },
   };
   a.pose(0.5, 0, true);
@@ -155,18 +159,37 @@ const nameOf = i => looks[i].name;
 const stuck = [];
 
 // ---------- state ----------
-const S = { mode: 'menu', phase: 'menu', me: 0, turn: 0, hp: [HP, HP], merlons: fullMerlons(), wind: { x: 0, z: 0 }, aim: { pitch: 0.5, power: 0 }, draw: 0,
+const S = { mode: 'menu', phase: 'menu', me: 0, turn: 0, hp: [HP, HP], st: newRound(Math.random), rand: Math.random, wind: { x: 0, z: 0 }, aim: { pitch: 0.5, power: 0 }, draw: 0,
   types: ['normal', 'normal'], seriesChoice: 1, best: 1, score: [0, 0], seriesWinner: -1, pending: null, cardT: 0, arenaChoice: 'random', arenaId: 'field', play: null, queue: [], winner: -1, focus: null };
 const viewer = () => (S.mode === 'online' ? S.me : S.turn);
 const myTurn = () => S.phase === 'aim' && (S.mode === 'hot' || S.turn === S.me);
 
-function startMatch({ arenaId, mode, me = 0, turn = 0, hp = [HP, HP], merlons = fullMerlons(), wind, looks: ls = [loadLook(0), loadLook(1)], best = 1, score = [0, 0] }) {
+const clone = o => JSON.parse(JSON.stringify(o));
+const placeArchers = a => archers.forEach((x, i) => x.root.position.set(...a[i]));
+let pickupObj = null, pickupKey = '';
+const PICKUP_SCALE = 1.6; // big enough to read from across the field (hit radius PICKUP_R in sim.js)
+function showPickup(p, pop) { // the floating power-up balloon (state lives in S.st.pickup)
+  const key = p ? `${p.kind}:${p.pos.join()}` : '';
+  if (key === pickupKey) return;
+  pickupKey = key;
+  if (pickupObj) { dispose(pickupObj); pickupObj = null; }
+  if (!p) return;
+  pickupObj = pickupModel(p.kind); pickupObj.position.set(...p.pos); pickupObj.userData.y = p.pos[1]; pickupObj.userData.pop = pop ? 0 : 1; pickupObj.scale.setScalar(pop ? 0.01 : PICKUP_SCALE); scene.add(pickupObj);
+  if (pop) { flash('A power-up floats in!'); sfx.ding(); }
+}
+const fading = [];
+function startMatch({ arenaId, mode, me = 0, turn = 0, st = null, wind, looks: ls = [loadLook(0), loadLook(1)], best = 1, score = [0, 0] }) {
   setLooks(ls);
   if (arenaId !== S.arenaId || !world) setArena(arenaId);
   for (const a of stuck) a.removeFromParent();
   stuck.length = 0;
-  arena.resetMerlons(merlons);
-  Object.assign(S, { mode, me, turn, hp: [...hp], merlons: [...merlons], wind, arenaId, phase: 'aim', winner: -1, play: null, queue: [], focus: null, draw: 0, best, score: [...score], seriesWinner: -1, pending: null, cardT: 0 });
+  for (const f of fading) f.o.removeFromParent();
+  fading.length = 0;
+  S.rand = rng((Math.random() * 2 ** 32) >>> 0); // hot-seat power-up spawns (online: the server's seeded rng)
+  st = clone(st || newRound(S.rand));
+  arena.resetBlocks(st.phys.b); placeArchers(st.phys.a); pickupKey = '-'; showPickup(st.pickup, false);
+  for (const i of [0, 1]) if (ARROWS[S.types[i]].special) S.types[i] = 'normal';
+  Object.assign(S, { mode, me, turn, hp: [...st.hp], st, wind, arenaId, phase: 'aim', winner: -1, play: null, queue: [], focus: null, draw: 0, best, score: [...score], seriesWinner: -1, pending: null, cardT: 0 });
   show('#roundCard', false);
   archers.forEach((a, i) => a.pose(0.5, 0, true, S.types[i]));
   ['#home', '#lobby', '#over', '#menu', '#notice'].forEach(s => show(s, false));
@@ -195,43 +218,81 @@ function notice(msg) {
 
 // ---------- shooting & playback ----------
 function fire() {
-  const aim = { ...S.aim }, type = S.types[S.turn];
+  const aim = { ...S.aim };
+  let type = S.types[S.turn];
+  if (ARROWS[type].special && !(S.st.ammo[S.turn][type] > 0)) type = 'normal';
   preview.visible = false; $('#readout').textContent = '';
   if (S.mode === 'online') { S.phase = 'wait'; sock.emit('shoot', { aim, type }); updateHud(); return; }
-  const sim = simulateShot(world, S.turn, aim, S.wind, type, S.merlons), after = applyShot(S.hp, S.merlons, sim);
-  const winner = winnerOf(after.hp), score = [...S.score];
-  if (winner >= 0) score[winner]++;
-  playShot({ shooter: S.turn, aim, sim, hp: after.hp, merlons: after.merlons, turn: winner >= 0 ? 1 - winner : 1 - S.turn, wind: randomWind(), winner, score, seriesWinner: seriesWinnerOf(score, S.best) });
+  playShot({ shooter: S.turn, aim, sim: simulateShot(world, S.turn, aim, S.wind, type, S.st), local: true }); // hot-seat: physics + outcome are resolved locally in endShot
 }
 function playShot(m) {
   if (S.play) { S.queue.push(m); return; }
   archers[m.shooter].pose(m.aim.pitch, 0, false);
   const arrows = m.sim.arrows.map(x => { const mesh = makeArrow(m.sim.type, archers[m.shooter].fletch); mesh.visible = false; scene.add(mesh); stuck.push(mesh); return { ...x, m: mesh, landed: false }; });
-  S.play = { arrows, ft: 0, hold: 1.3, m };
+  // live rigid-body playback from the same snapshot + impulses the server uses; the server's settled state is snapped in at the end
+  const run = new PhysRun(S.st.phys, shotEvents(m.sim));
+  S.play = { arrows, ft: 0, hold: 1.0, m, run, fxi: 0, logi: 0, focus: null, chair: null, vy: new Float32Array(LAYOUT.length), puffs: 0, t0: performance.now() };
   S.phase = 'fly'; S.draw = 0; preview.visible = false;
   sfx.twang(); sfx.whoosh(Math.max(...arrows.map(a => a.res.t)) * 0.8);
   updateHud();
 }
 function land(a) {
   a.landed = true;
-  const r = a.res, d = new V(...r.dir).normalize();
-  a.m.position.set(...r.pos).addScaledVector(d, 0.15); a.m.quaternion.setFromUnitVectors(X, d);
-  a.m.visible = r.kind !== 'out';
-  if (r.merlon !== undefined) { // chip or knock off a merlon; the arrow stays stuck in it
-    a.m.updateMatrixWorld(); arena.merlonMesh(r.merlon).attach(a.m);
-    applyResult(S, r);
-    arena.setMerlon(r.merlon, S.merlons[r.merlon], true);
-    if (S.merlons[r.merlon] === 0) { sfx.crumble(); shake = 0.2; } else sfx.crack();
+  const r = a.res, d = new V(...r.dir).normalize(), sp = a.m.userData.special;
+  a.m.position.set(...r.pos).addScaledVector(d, sp ? -0.3 : 0.15);
+  if (!sp) a.m.quaternion.setFromUnitVectors(X, d);
+  a.m.visible = r.kind !== 'out' && r.kind !== 'pickup' && sp !== 'bomb';
+  if (r.kind === 'pickup') { // popped the balloon: the special goes to the shooter's ammo
+    const k = r.pickup, UI = SPECIAL_UI[k];
+    arena.puff(new V(...r.pos), 10, 0.28, undefined, 1.2, 0.4, 0.8); showPickup(null);
+    sfx.pop(); flash(`${nameOf(S.play.m.shooter)} grabs a ${UI.label.toUpperCase()}!`);
+    floatText(`+1 ${UI.label}`, new V(...r.pos), '#ffd84a');
+  } else if (r.kind === 'block') { // the arrow stays stuck in the stone it hit (and moves with it)
+    if (!sp) { a.m.updateMatrixWorld(); arena.blockMesh(r.block).attach(a.m); }
+    sfx.crack();
   } else if (r.who !== undefined) {
-    a.m.updateMatrixWorld(); archers[r.who].root.attach(a.m);
-    applyResult(S, r);
+    if (!sp) { a.m.updateMatrixWorld(); archers[r.who].root.attach(a.m); }
+    S.hp[r.who] = Math.max(0, S.hp[r.who] - r.dmg);
     const head = r.kind === 'head';
     floatText(`−${r.dmg}`, new V(...r.pos).add(new V(0, 0.4, 0)), head ? '#ffd84a' : '#fff');
     if (head) { sfx.ding(); flash('HEADSHOT!'); }
     sfx.grunt(); shake = head ? 0.45 : 0.25;
     updateHud();
   } else if (r.kind === 'stone') sfx.crack();
-  else if (r.kind !== 'out') sfx.thunk();
+  else if (r.kind !== 'out' && !sp) sfx.thunk();
+}
+const LOG_TEXT = { ground: ['#ff8a5c', 'Fell to the ground!'], fall: ['#ffd0a0', 'Took a tumble!'], debris: ['#fff', ''], blast: ['#ff6a3a', ''], spin: ['#9ad0ff', ''] };
+function stepPhysics(P) {
+  const run = P.run, target = Math.floor(P.ft / STEP + 1e-6);
+  for (let n = 0; n < 8 && !run.done && run.k < target; n++) run.step(); // fixed 1/60 steps tied to playback time (slow-mo slows the stones too)
+  run.blocks.forEach((b, i) => { // copy transforms + crunch/dust when a falling stone lands
+    const m = arena.blocks[i], vy = b.velocity.y, pv = P.vy[i];
+    if (b.sleepState !== 2 || m.position.distanceToSquared(b.position) > 1e-8) { m.position.copy(b.position); m.quaternion.copy(b.quaternion); }
+    if (pv < -2.2 && vy > pv + 2) { sfx.crunch(Math.min(1, -pv / 7)); if (P.puffs++ < 40) arena.puff(new V(b.position.x, b.position.y - LAYOUT[i].half[1], b.position.z), 2, 0.3); }
+    P.vy[i] = vy;
+  });
+  run.archers.forEach((b, i) => archers[i].root.position.set(b.position.x, b.position.y - 0.8, b.position.z));
+  for (; P.fxi < run.fx.length; P.fxi++) {
+    const e = run.fx[P.fxi], p = new V(...e.p);
+    if (e.kind === 'hit') { arena.chunks(p, 4, new V(...P.m.sim.arrows[0].res.dir).setY(0).normalize().multiplyScalar(0.6)); arena.puff(p, 3, 0.3); sfx.crunch(1); shake = Math.max(shake, 0.15); }
+    else if (e.kind === 'blast') { arena.explode(p); sfx.boom(); shake = 1.0; flash('BOOM!'); P.focus = p; }
+    else if (e.kind === 'chair') { P.chair = P.arrows[0].m; P.chair.visible = true; sfx.whir(ARROWS.wheelchair.spin + 0.3); flash('WHEEEEE!'); }
+  }
+  if (P.chair && run.chair) {
+    P.chair.position.copy(run.chair.position); P.chair.quaternion.copy(run.chair.quaternion);
+    if (run.spin && run.k >= run.spin.start && run.k < run.spin.end) { // whirl: sparks + dust around the spinning chair
+      const c = run.chair.position, g = new V(c.x, c.y - 0.3, c.z);
+      arena.sparks(g, 2); if (Math.random() < 0.25) arena.puff(g, 1, 0.3, undefined, 1.4, 0.5);
+    }
+  }
+  for (; P.logi < run.log.length; P.logi++) { // physics damage: falls, falling stones, blast, spin
+    const e = run.log[P.logi], [col, msg] = LOG_TEXT[e.kind] || ['#fff', ''];
+    S.hp[e.who] = Math.max(0, S.hp[e.who] - e.dmg);
+    floatText(`−${e.dmg}`, new V(...e.pos).add(new V(0, 2.1, 0)), col);
+    if (msg) flash(`${nameOf(e.who)}: ${msg}`);
+    if (e.kind !== 'spin' || Math.random() < 0.5) sfx.grunt();
+    shake = Math.max(shake, e.kind === 'ground' ? 0.5 : 0.2); updateHud();
+  }
 }
 function updatePlay(dt) {
   const P = S.play, slow = P.arrows.some(a => a.res.kind === 'head' && P.ft > a.res.t - 0.4 && P.ft < a.res.t + 0.25);
@@ -242,29 +303,46 @@ function updatePlay(dt) {
     if (i >= a.pts.length - 1) { land(a); continue; }
     const p0 = new V(...a.pts[i]), p1 = new V(...a.pts[i + 1]);
     a.m.position.lerpVectors(p0, p1, u - i);
-    a.m.quaternion.setFromUnitVectors(X, p1.sub(p0).normalize());
+    if (a.m.userData.special) a.m.rotation.set(0, P.ft * 1.3, -P.ft * (a.m.userData.special === 'wheelchair' ? 9 : 4) * archers[P.m.shooter].f); // tumbling lob
+    else a.m.quaternion.setFromUnitVectors(X, p1.sub(p0).normalize());
     a.m.visible = true;
   }
-  if (P.arrows.every(a => a.landed) && (P.hold -= dt) <= 0) endShot();
+  stepPhysics(P);
+  if (P.arrows.every(a => a.landed) && P.run.done && (P.hold -= dt) <= 0) endShot();
 }
 function playLead() {
   const P = S.play;
   return P && (P.arrows.find(a => !a.landed && P.ft >= a.t0) || P.arrows.find(a => a.res.who !== undefined) || P.arrows.find(a => a.m.visible));
 }
+function blockDrift(b) { // largest gap between the live blocks and an authoritative snapshot (m)
+  let d = 0; arena.blocks.forEach((m, i) => { d = Math.max(d, Math.hypot(m.position.x - b[i][0], m.position.y - b[i][1], m.position.z - b[i][2])); }); return d;
+}
 function endShot() {
-  const m = S.play.m, lead = playLead();
-  S.focus = lead ? lead.m.getWorldPosition(new V()) : null;
-  m.merlons.forEach((h, id) => arena.setMerlon(id, h, true)); // authoritative state
-  Object.assign(S, { hp: [...m.hp], merlons: [...m.merlons], turn: m.turn, wind: m.wind, play: null, aim: { pitch: 0.5, power: 0 } });
-  if (m.winner >= 0) S.score = [...m.score];
-  if (m.winner >= 0 && m.seriesWinner < 0) { // round over: card, then the next round (loser shoots first; online the server sends it)
-    S.phase = 'round'; S.winner = m.winner; S.cardT = 2.4;
-    $('#roundCard b').textContent = S.mode === 'online' && m.winner === S.me ? 'Round to you!' : `Round to ${nameOf(m.winner)}!`;
-    $('#roundCard span').textContent = `${S.score[0]} - ${S.score[1]}`; $('#roundCard').style.borderColor = css(cols[m.winner]);
+  const P = S.play, m = P.m, lead = playLead();
+  S.focus = P.focus || (lead ? lead.m.getWorldPosition(new V()) : null);
+  let o;
+  if (m.local) { // hot-seat: this machine is the authority
+    const res = P.run.result(), next = finishShot(S.st, m.shooter, m.sim.type, m.sim, res, S.rand), winner = winnerOf(next.hp), score = [...S.score];
+    if (winner >= 0) score[winner]++;
+    o = { st: { hp: next.hp, phys: next.phys, ammo: next.ammo, pickup: next.pickup, spawnIn: next.spawnIn }, got: next.got, winner, score, seriesWinner: seriesWinnerOf(score, S.best), turn: winner >= 0 ? 1 - winner : 1 - m.shooter, wind: randomWind() };
+  } else o = m;
+  S.lastDrift = blockDrift(o.st.phys.b); S.lastLog = [...P.run.log]; S.lastGot = o.got; S.lastSteps = P.run.k; S.lastPlayMs = performance.now() - P.t0;
+  arena.setBlocks(o.st.phys.b); placeArchers(o.st.phys.a); // snap to the settled authoritative state (normally identical)
+  if (P.chair) fading.push({ o: P.chair, t: 1 });
+  showPickup(o.st.pickup, true);
+  S.st = clone(o.st);
+  for (const i of [0, 1]) if (ARROWS[S.types[i]].special && !(S.st.ammo[i][S.types[i]] > 0)) S.types[i] = 'normal';
+  Object.assign(S, { hp: [...S.st.hp], turn: o.turn, wind: o.wind, play: null, aim: { pitch: 0.5, power: 0 } });
+  const mm = { winner: o.winner, seriesWinner: o.seriesWinner };
+  if (mm.winner >= 0) S.score = [...o.score];
+  if (mm.winner >= 0 && mm.seriesWinner < 0) { // round over: card, then the next round (loser shoots first; online the server sends it)
+    S.phase = 'round'; S.winner = mm.winner; S.cardT = 2.4;
+    $('#roundCard b').textContent = S.mode === 'online' && mm.winner === S.me ? 'Round to you!' : `Round to ${nameOf(mm.winner)}!`;
+    $('#roundCard span').textContent = `${S.score[0]} - ${S.score[1]}`; $('#roundCard').style.borderColor = css(cols[mm.winner]);
     show('#roundCard', true); sfx.ding();
-    if (S.mode === 'hot') S.pending = { arenaId: S.arenaId, mode: 'hot', wind: randomWind(), turn: 1 - m.winner, best: S.best, score: S.score };
-  } else if (m.winner >= 0) { // series (or single match) over
-    const w = m.seriesWinner, series = S.best > 1, online = S.mode === 'online';
+    if (S.mode === 'hot') S.pending = { arenaId: S.arenaId, mode: 'hot', wind: randomWind(), turn: 1 - mm.winner, best: S.best, score: S.score };
+  } else if (mm.winner >= 0) { // series (or single match) over
+    const w = mm.seriesWinner, series = S.best > 1, online = S.mode === 'online';
     S.phase = 'over'; S.winner = w; S.seriesWinner = w;
     $('#winner').textContent = online ? (w === S.me ? `You win${series ? ' the series' : ''}!` : `You lose${series ? ' the series' : ''}`) : `${nameOf(w)} wins${series ? ' the series' : ''}!`;
     $('#taunt').textContent = `${nameOf(w)}: “${TAUNTS[looks[w].taunt]}”`; $('#taunt').style.background = css(cols[w]);
@@ -287,7 +365,7 @@ const preview = new THREE.Points(new THREE.BufferGeometry().setAttribute('positi
   noOutline(new THREE.PointsMaterial({ color: 0xffffff, size: 11, sizeAttenuation: false, map: dotTex(), alphaTest: 0.4, transparent: true, depthWrite: false })));
 preview.visible = false; scene.add(preview);
 function updatePreview() {
-  const { pos, vel } = launch(S.turn, S.aim), attr = preview.geometry.attributes.position, g = G * ARROWS[S.types[S.turn]].g, dt = 1 / 34;
+  const { pos, vel } = launch(S.turn, S.aim, S.st.phys.a[S.turn]), attr = preview.geometry.attributes.position, g = G * ARROWS[S.types[S.turn]].g, dt = 1 / 34;
   for (let k = 0; k < PREV_N; k++) {
     vel.y -= g * dt; pos.x += vel.x * dt; pos.y += vel.y * dt; pos.z += vel.z * dt;
     attr.setXYZ(k, pos.x, pos.y, pos.z);
@@ -339,6 +417,10 @@ canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
 
 // ---------- UI wiring ----------
+for (const k of SPECIALS) { // extra ammo slots for earned specials (shown only while you hold one)
+  const b = document.createElement('button'); b.dataset.t = k; b.className = 'special hidden';
+  b.innerHTML = `${SPECIAL_UI[k].icon}<small>${SPECIAL_UI[k].label}</small><em>×0</em>`; $('#types').appendChild(b);
+}
 document.querySelectorAll('#types button').forEach(b => b.onclick = () => {
   if (!myTurn()) return;
   S.types[S.turn] = b.dataset.t; archers[S.turn].pose(S.aim.pitch, 0, true, b.dataset.t); updateHud();
@@ -453,9 +535,9 @@ function net() {
     show('#home', false); openPanel('#lobby');
   });
   sock.on('joinError', msg => { show('#lobby', false); show('#home', true); $('#homeMsg').textContent = autoJoin ? `Couldn't join room ${autoJoin}: ${msg}.` : msg; autoJoin = null; });
-  sock.on('start', ({ arena: id, you, hp, merlons, turn, wind, looks: ls, best, score }) => {
+  sock.on('start', ({ arena: id, you, st, turn, wind, looks: ls, best, score }) => {
     autoJoin = null;
-    const m = { arenaId: id, mode: 'online', me: you, hp, merlons, turn, wind, looks: ls, best, score };
+    const m = { arenaId: id, mode: 'online', me: you, st, turn, wind, looks: ls, best, score };
     if (S.mode === 'online' && (S.play || S.cardT > 0)) S.pending = m; else startMatch(m); // let the last shot and round card finish first
   });
   sock.on('aim', a => { if (S.mode === 'online' && S.phase === 'aim' && S.turn !== S.me) archers[S.turn].pose(a.pitch, a.draw, true, S.types[S.turn]); });
@@ -494,7 +576,14 @@ function updateHud() {
   $('#windFlag').style.transform = `scaleX(${S.wind.x * archers[viewer()].f >= 0 ? 1 : -1})`; // flag points away from you = blowing toward the enemy
   const mine = myTurn();
   show('#types', mine);
-  document.querySelectorAll('#types button').forEach(b => b.classList.toggle('on', b.dataset.t === S.types[S.turn]));
+  let specials = 0;
+  document.querySelectorAll('#types button').forEach(b => {
+    b.classList.toggle('on', b.dataset.t === S.types[S.turn]);
+    if (!b.classList.contains('special')) return;
+    const n = (S.st.ammo[S.turn] || {})[b.dataset.t] || 0;
+    b.classList.toggle('hidden', n <= 0); b.querySelector('em').textContent = `×${n}`; specials += n > 0;
+  });
+  $('#types').classList.toggle('many', specials > 0);
   $('#hint').textContent = S.phase === 'aim' && S.draw === 0 ? (mine ? 'Drag ↑↓ angle · ←→ power · release to shoot' : 'Opponent is aiming…') : '';
   $('#muteBtn').textContent = `Sound: ${sfx.isMuted() ? 'off' : 'on'}`;
 }
@@ -505,15 +594,52 @@ let camJump = true;
 function camTarget(t) {
   if (S.phase === 'menu') { const a = t * 0.06 + 1.2; return [new V(Math.cos(a) * 30, 17, Math.sin(a) * 30), new V(0, 4, 0)]; }
   const v = viewer(), fv = archers[v].f;
-  const lead = S.play ? playLead() : null, focus = lead ? lead.m.getWorldPosition(new V()) : S.phase === 'over' ? S.focus : null;
+  let lead = S.play ? playLead() : null, focus = lead ? lead.m.getWorldPosition(new V()) : S.phase === 'over' ? S.focus : null;
+  if (S.play && S.play.focus) focus = S.play.focus;
   if (focus) {
-    const fs = S.play ? archers[S.play.m.shooter].f : fv;
+    const fs = S.play ? archers[S.play.m.shooter].f : fv, P = S.play;
+    if (P && !P.arrows.some(x => !x.landed)) { // impact: pull back so the whole tower (and anyone falling) is in shot
+      const f = new V(focus.x, clamp(focus.y, 2.2, 4), 0), por = camera.aspect < 0.9 ? 1.5 : 1;
+      return [f.clone().add(new V(-5.5 * fs * por, 3.2 * por, 10.5 * fv * por)), f.clone().add(new V(0, -0.6, 0))];
+    }
     return [focus.clone().add(new V(-3 * fs, 2.2, 5.5 * fv)), focus.clone().add(new V(1.5 * fs, 0, 0))];
   }
   const a = archers[v].root.position, portrait = camera.aspect < 0.9; // close over-the-shoulder view, archer big in the lower left
-  return portrait ? [a.clone().add(new V(-3.45 * fv, 2.95, 1.5 * fv)), a.clone().add(new V(10 * fv, 0.06, -1.85 * fv))]
-                  : [a.clone().add(new V(-5.1 * fv, 2.9, 2.3 * fv)), a.clone().add(new V(10 * fv, 0.78, -0.9 * fv))];
+  const [cp, cl] = portrait ? [a.clone().add(new V(-3.45 * fv, 2.95, 1.5 * fv)), a.clone().add(new V(10 * fv, 0.06, -1.85 * fv))]
+                            : [a.clone().add(new V(-5.1 * fv, 2.9, 2.3 * fv)), a.clone().add(new V(10 * fv, 0.78, -0.9 * fv))];
+  const low = clamp(5 - a.y, 0, 5); // fallen archer: higher, further-back camera looking down over the rubble and props
+  if (low > 0.3) { cp.y += low * 0.9; cp.x -= fv * low * 0.5; cl.y -= low * 0.5; }
+  const top = Math.max(stoneTopNear(cp.x, cp.z), stoneTopNear((cp.x + a.x) / 2, (cp.z + a.z) / 2)); // after a fall the archer may stand inside a broken shell: keep the camera above the stones
+  if (cp.y < top + 0.9) { const lift = top + 0.9 - cp.y; cp.y += lift; cp.addScaledVector(new V(-fv, 0, 0), lift * 0.4); }
+  return [cp, cl];
 }
+const _ab = new V(), _ap = new V(), _chest = new V();
+function fadeTo(mt, want, dt) {
+  const o = mt.opacity + (want - mt.opacity) * Math.min(1, dt * 8);
+  if (o === want && mt.opacity === want) return;
+  mt.opacity = Math.abs(o - want) < 0.01 ? want : o; const tr = mt.opacity < 0.99;
+  if (mt.transparent !== tr) { mt.transparent = tr; mt.depthWrite = !tr; mt.needsUpdate = true; }
+}
+function fadeOccluders(dt) { // stones between the camera and your archer (e.g. after a fall), and trees in front of the action, turn see-through
+  const on = S.phase === 'aim' || S.phase === 'wait';
+  _ab.subVectors(camLook, camera.position); const LL = _ab.lengthSq();
+  for (const t of arena.fadeTrees || []) {
+    const k = _ap.subVectors(t.c, camera.position).dot(_ab) / LL;
+    const want = k > 0 && k < 0.97 && _ap.addScaledVector(_ab, -k).length() < t.r + 0.6 ? 0.22 : 1;
+    for (const mt of t.mats) fadeTo(mt, want, dt);
+  }
+  _chest.copy(archers[viewer()].root.position).y += 1;
+  _ab.subVectors(_chest, camera.position); const L2 = _ab.lengthSq();
+  for (const m of arena.blocks) {
+    let want = 1;
+    if (on) {
+      const t = _ap.subVectors(m.position, camera.position).dot(_ab) / L2;
+      if (t > 0.02 && t < 0.95 && _ap.addScaledVector(_ab, -t).lengthSq() < 1.3) want = 0.28;
+    }
+    fadeTo(m.material, want, dt);
+  }
+}
+function stoneTopNear(x, z) { let t = -1; for (const m of arena.blocks) if (Math.abs(m.position.x - x) < 1.6 && Math.abs(m.position.z - z) < 1.6) t = Math.max(t, m.position.y + 0.5); return t; }
 function pipRect() {
   const portrait = innerWidth < innerHeight, w = Math.round(innerWidth * (portrait ? 0.3 : 0.16)), h = Math.round(w * (portrait ? 1.15 : 0.85));
   return { x: innerWidth - w - 10, y: 74, w, h };
@@ -529,11 +655,14 @@ addEventListener('resize', resize); resize();
 
 // ---------- loop ----------
 const clock = new THREE.Clock();
-let time = 0;
+let time = 0, fpsN = 0, fpsT0 = 0;
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
   time += dt;
   if (S.play) updatePlay(dt);
+  if (pickupObj) { const u = pickupObj.userData; u.tick(time); if (u.pop < 1) { u.pop = Math.min(1, u.pop + dt * 2.5); pickupObj.scale.setScalar(PICKUP_SCALE * Math.max(0.01, Math.sin(u.pop * Math.PI * 0.75) / Math.sin(Math.PI * 0.75))); } }
+  for (let i = fading.length - 1; i >= 0; i--) { const f = fading[i]; f.t -= dt * 0.7; f.o.scale.setScalar(Math.max(0.01, f.t)); if (f.t <= 0) { f.o.removeFromParent(); fading.splice(i, 1); } }
+  fpsN++; if (time - fpsT0 >= 1) { S.fps = fpsN / (time - fpsT0); fpsN = 0; fpsT0 = time; }
   if (S.cardT > 0) S.cardT -= dt;
   if (S.pending && !S.play && S.cardT <= 0) { const p = S.pending; S.pending = null; startMatch(p); }
   if (flashT > 0 && (flashT -= dt) <= 0 && !drag) $('#readout').textContent = '';
@@ -541,6 +670,7 @@ function frame() {
   const [tp, tl] = camTarget(time), k = camJump ? 1 : 1 - Math.exp(-dt * (S.phase === 'fly' ? 10 : 4.5));
   camPos.lerp(tp, k); camLook.lerp(tl, k); camJump = false;
   camera.position.copy(camPos); camera.lookAt(camLook);
+  fadeOccluders(dt);
   if (shake > 0.002) { camera.position.add(new V(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(shake)); shake *= Math.exp(-dt * 7); }
   for (let i = floats.length - 1; i >= 0; i--) {
     const f = floats[i]; f.t += dt; f.p.y += dt * 0.7;
@@ -550,7 +680,11 @@ function frame() {
   }
   renderer.setViewport(0, 0, innerWidth, innerHeight);
   effect.render(scene, camera);
-  const pip = S.phase === 'aim' || S.phase === 'wait';
+  let pip = S.phase === 'aim' || S.phase === 'wait';
+  if (pip && pickupObj) { // never let the opponent inset cover the power-up
+    const q = pickupObj.position.clone().project(camera), r = pipRect(), x = (q.x + 1) / 2 * innerWidth, y = (1 - q.y) / 2 * innerHeight;
+    if (q.z < 1 && x > r.x - 40 && x < r.x + r.w + 40 && y > r.y - 50 && y < r.y + r.h + 40) pip = false;
+  }
   show('#pip', pip);
   if (pip) { // picture-in-picture of the opponent
     const o = archers[1 - viewer()], r = pipRect(), fv = archers[viewer()].f;
@@ -640,20 +774,42 @@ window.__game = {
   screenX: i => archers[i].root.position.clone().project(camera).x, // -1..1, left..right
   get world() { return world; },
   startHot,
-  simulate: (aim, type = 'normal') => simulateShot(world, S.turn, aim, S.wind, type, S.merlons),
+  simulate: (aim, type = 'normal') => simulateShot(world, S.turn, aim, S.wind, type, S.st),
   setWind: (x, z) => { S.wind = { x, z }; updateHud(); },
-  merlons: () => ({ hp: [...S.merlons], vis: arena.merlonState() }),
-  findMerlonHit(ids, type = 'normal') { // aim whose arrows hit one of the given merlon ids
+  layout: LAYOUT,
+  pickupObj: () => pickupObj,
+  spinning: () => !!(S.play && S.play.run.spin && S.play.run.k >= S.play.run.spin.start && S.play.run.k < S.play.run.spin.end),
+  blasted: () => !!(S.play && S.play.focus),
+  blocks: () => arena.blocks.map(m => [m.position.x, m.position.y, m.position.z, m.quaternion.x, m.quaternion.y, m.quaternion.z, m.quaternion.w]),
+  get st() { return S.st; },
+  playing: () => !!S.play,
+  findBlockHit(ids, type = 'normal') { // aim whose first arrow hits one of the given block indices
     ids = [].concat(ids);
-    for (let pd = 5; pd <= 40; pd += 1) for (let pw = 0.4; pw <= 1; pw += 0.005) {
-      const aim = { pitch: pd * DEG, power: pw };
-      for (const { res: r } of simulateShot(world, S.turn, aim, S.wind, type, S.merlons).arrows) if (r.kind === 'merlon' && ids.includes(r.merlon)) return { aim, merlon: r.merlon };
+    for (let pd = 3; pd <= 45; pd += 1) for (let pw = 0.3; pw <= 1; pw += 0.004) {
+      const aim = { pitch: pd * DEG, power: pw }, r = simulateShot(world, S.turn, aim, S.wind, type, S.st).arrows[0].res;
+      if (r.kind === 'block' && ids.includes(r.block)) return { aim, block: r.block };
     }
     return null;
   },
+  findPickupHit(type = 'normal') {
+    for (let pd = 5; pd <= 70; pd += 1) for (let pw = 0.3; pw <= 1; pw += 0.004) {
+      const aim = { pitch: pd * DEG, power: pw };
+      if (simulateShot(world, S.turn, aim, S.wind, type, S.st).arrows.some(a => a.res.kind === 'pickup')) return aim;
+    }
+    return null;
+  },
+  findLanding(test, type) { // first aim whose landing point satisfies test(res)
+    for (let pd = 5; pd <= 70; pd += 1) for (let pw = 0.3; pw <= 1; pw += 0.004) {
+      const aim = { pitch: pd * DEG, power: pw }, r = simulateShot(world, S.turn, aim, S.wind, type, S.st).arrows[0].res;
+      if (test(r)) return { aim, res: r };
+    }
+    return null;
+  },
+  setPickup(p) { if (S.mode !== 'hot') return false; S.st.pickup = p; showPickup(p, true); return true; }, // hot-seat test helper
+  giveAmmo(k, n = 1, who = S.turn) { if (S.mode !== 'hot') return false; S.st.ammo[who][k] += n; updateHud(); return true; },
   findHit(type = 'normal') { // search for a body hit with the current wind
     for (const pd of [35, 25, 45, 55, 15]) for (let pw = 0.4; pw <= 1; pw += 0.002) {
-      const aim = { pitch: pd * DEG, power: pw }, r = simulateShot(world, S.turn, aim, S.wind, type, S.merlons).arrows[0].res;
+      const aim = { pitch: pd * DEG, power: pw }, r = simulateShot(world, S.turn, aim, S.wind, type, S.st).arrows[0].res;
       if (r.kind === 'body') return aim;
     }
     return null;

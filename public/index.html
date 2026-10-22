@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="build" content="ad3t-v4.5">
+<meta name="build" content="ad3t-v5">
 <meta name="color-scheme" content="only light">
 <meta name="theme-color" content="#2f6fe0">
 <meta name="mobile-web-app-capable" content="yes">
@@ -17,7 +17,7 @@
 <link rel="icon" href="/icons/icon-192.png" sizes="192x192">
 <link rel="stylesheet" href="style.css">
 <script src="/socket.io/socket.io.min.js"></script>
-<script type="importmap">{ "imports": { "three": "/vendor/three.module.js", "three/addons/": "/vendor/jsm/" } }</script>
+<script type="importmap">{ "imports": { "three": "/vendor/three.module.js", "three/addons/": "/vendor/jsm/", "cannon-es": "/vendor/cannon-es.js" } }</script>
 </head>
 <body>
 <div id="hud" class="hidden">
@@ -50,7 +50,7 @@
     <div id="homeMsg" class="msg"></div>
     <button id="installBtn" class="hidden"><svg viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M5 20h14"/></svg>Install app</button>
     <div id="installTip" class="tip hidden"></div>
-    <div class="build">ad3t-v4.5</div>
+    <div class="build">ad3t-v5</div>
   </div>
   <footer class="pf"><button id="hotBtn">Hot-seat</button><button id="createBtn">Create room</button></footer>
 </div>
