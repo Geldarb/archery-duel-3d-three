@@ -1,26 +1,29 @@
-// Archery Duel 3D v3 — Castle Siege. Hot-seat + online rooms. Plain Three.js.
+// Archery Duel 3D v4 — cartoon Castle Siege. Hot-seat + online rooms. Plain Three.js.
 import * as THREE from 'three';
-import { DIST, HP, ARROWS, ARENA_IDS, WALL_H, MERLONS, makeWorld, simulateShot, applyShot, applyResult, fullMerlons, winnerOf, randomWind, launch, G } from './sim.js';
-import { buildArena, heraldry } from './world.js';
+import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { DIST, HP, ARROWS, ARENA_IDS, WALL_H, SHOULDER, makeWorld, simulateShot, applyShot, applyResult, fullMerlons, winnerOf, randomWind, launch, G } from './sim.js';
+import { buildArena, heraldry, toon, noOutline } from './world.js';
 import * as sfx from './audio.js';
 
 const V = THREE.Vector3, X = new V(1, 0, 0), $ = s => document.querySelector(s), DEG = Math.PI / 180;
 const NAMES = ['Blue', 'Red'], COLORS = [0x2f6fd6, 0xd63a2f];
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
-const mat = c => new THREE.MeshStandardMaterial({ color: c, flatShading: true });
+const mat = c => toon(c);
 const show = (sel, on) => $(sel).classList.toggle('hidden', !on);
 
 // ---------- renderer / scene ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75)); // keep phones fast
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+const effect = new OutlineEffect(renderer, { defaultThickness: 0.0042, defaultColor: [0.09, 0.08, 0.13] }); // cheap inverted-hull outlines
 document.body.prepend(renderer.domElement);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 500), pipCam = new THREE.PerspectiveCamera(38, 1, 0.1, 300);
 const hemi = new THREE.HemisphereLight(0xe8f4ff, 0x4f6b35, 1.6); scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff4e0, 2.2);
-sun.position.set(-15, 40, 25); sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024);
-Object.assign(sun.shadow.camera, { left: -40, right: 40, top: 30, bottom: -30, far: 120 });
+sun.position.set(-12, 40, 22); sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024);
+Object.assign(sun.shadow.camera, { left: -26, right: 26, top: 22, bottom: -22, far: 110 }); sun.shadow.radius = 4;
 scene.add(sun);
 let world = null, arena = null;
 function setArena(id) { if (arena) arena.dispose(); world = makeWorld(id); arena = buildArena(scene, world, { hemi, sun }); }
@@ -31,53 +34,62 @@ function setLimb(mesh, a, b) {
   mesh.position.copy(a).addScaledVector(d, 0.5); mesh.scale.set(1, d.length(), 1);
   mesh.quaternion.setFromUnitVectors(new V(0, 1, 0), d.normalize());
 }
-function makeArrow(type = 'normal') { // tip at origin, points along +x
-  const g = new THREE.Group(), heavy = type === 'heavy', r = heavy ? 0.027 : 0.018;
-  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.85, 5), mat(heavy ? 0x5b4632 : 0xc9a36b));
+function makeArrow(type = 'normal') { // chunky cartoon arrow, tip at origin, points along +x
+  const g = new THREE.Group(), heavy = type === 'heavy', r = heavy ? 0.04 : 0.028;
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.85, 6), mat(heavy ? 0x6b4423 : 0xc98a4b));
   shaft.rotation.z = Math.PI / 2; shaft.position.x = -0.5;
-  const tip = new THREE.Mesh(new THREE.ConeGeometry(heavy ? 0.065 : 0.045, heavy ? 0.18 : 0.14, 6), mat(heavy ? 0x4b5563 : 0x9aa3ad));
-  tip.rotation.z = -Math.PI / 2; tip.position.x = -0.07;
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(heavy ? 0.09 : 0.065, heavy ? 0.22 : 0.17, 4), mat(heavy ? 0x7d8794 : 0xdfe4ea));
+  tip.rotation.z = -Math.PI / 2; tip.position.x = -0.08;
   g.add(shaft, tip);
+  const fl = mat(type === 'split' ? 0xffc928 : heavy ? 0xe0342c : 0xffffff); fl.side = THREE.DoubleSide;
   for (let k = 0; k < 3; k++) {
-    const f = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.07, 0.006), mat(type === 'split' ? 0xf5c518 : heavy ? 0x222222 : 0xf2f2f2));
-    f.position.set(-0.82, 0.045, 0);
+    const f = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 0.1), fl);
+    f.position.set(-0.83, 0.06, 0);
     const h = new THREE.Group(); h.rotation.x = k * Math.PI * 2 / 3; h.add(f); g.add(h);
   }
   g.traverse(o => { o.castShadow = true; });
   return g;
 }
-function makeArcher(i) { // medieval longbowman: mail coif, kettle helm, heraldic tabard
+function makeArcher(i) { // chunky big-headed cartoon archer
   const f = i ? -1 : 1, root = new THREE.Group();
-  const skin = mat(0xf0c39a), team = mat(COLORS[i]), hose = mat(0x4a3b2a), boot = mat(0x2b1d12), wood = mat(0x7a4a22), yew = mat(0xa0652f);
-  const mail = new THREE.MeshStandardMaterial({ color: 0x8d939b, roughness: 0.55, metalness: 0.35, flatShading: true });
-  const steel = new THREE.MeshStandardMaterial({ color: 0xb4bac2, roughness: 0.35, metalness: 0.45, flatShading: true });
+  const skin = mat(0xffc9a0), team = mat(COLORS[i]), dark = mat(i ? 0x6e1a16 : 0x173a7a), boot = mat(0x6b3f1d), leather = mat(0x9a5b2a), gold = mat(0xf4c430);
+  const hair = mat(0x5a3418), eye = mat(0x1d1d24), steel = mat(i ? 0xd8312b : 0xc9d0da), wood = mat(0x8f5326);
   const add = (geo, m, x, y, z, parent = root) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = true; parent.add(o); return o; };
-  for (const z of [-0.12, 0.12]) { add(new THREE.CylinderGeometry(0.08, 0.07, 0.86, 6), hose, 0, 0.43, z); add(new THREE.BoxGeometry(0.28, 0.12, 0.14), boot, 0.05, 0.06, z); }
-  add(new THREE.CylinderGeometry(0.2, 0.25, 0.74, 8), mail, 0, 1.17, 0); // mail hauberk
-  const herald = new THREE.MeshStandardMaterial({ map: heraldry(i) });
-  add(new THREE.BoxGeometry(0.05, 0.86, 0.4), [herald, team, team, team, team, team], 0.235, 1.12, 0); // tabard front with arms
-  add(new THREE.BoxGeometry(0.05, 0.86, 0.4), team, -0.235, 1.12, 0); // tabard back
-  add(new THREE.CylinderGeometry(0.265, 0.265, 0.07, 8), boot, 0, 0.98, 0); // belt
-  add(new THREE.CylinderGeometry(0.09, 0.11, 0.14, 7), mail, 0, 1.58, 0); // mail neck
-  add(new THREE.SphereGeometry(0.18, 10, 8), skin, 0, 1.76, 0);
-  add(new THREE.SphereGeometry(0.205, 10, 8, -Math.PI * 0.65, Math.PI * 1.3, 0, Math.PI * 0.8), mail, 0, 1.76, 0); // coif, face open
-  add(new THREE.SphereGeometry(0.215, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), steel, 0, 1.82, 0); // kettle helm dome
-  add(new THREE.CylinderGeometry(0.34, 0.34, 0.03, 14), steel, 0, 1.83, 0); // helm brim
-  for (const z of [-0.07, 0.07]) add(new THREE.BoxGeometry(0.03, 0.035, 0.035), boot, 0.175, 1.77, z);
-  const quiver = add(new THREE.CylinderGeometry(0.08, 0.07, 0.55, 6), wood, -0.29, 1.3, 0.05); quiver.rotation.z = -0.35;
-  for (const z of [0, 0.05, 0.1]) add(new THREE.ConeGeometry(0.03, 0.12, 4), mat(0xf2f2f2), -0.39 - z * 0.3, 1.6 + z * 0.2, z);
-  const aim = new THREE.Group(); aim.position.set(0, 1.44, 0); root.add(aim); // shoulder pivot, +x = shot direction
-  const sFront = new V(0.03, 0, 0.2), hand = new V(0.62, 0, 0), sBack = new V(0, 0, -0.2);
-  for (const z of [-0.2, 0.2]) add(new THREE.SphereGeometry(0.09, 8, 6), team, 0, 0, z, aim);
-  setLimb(add(new THREE.CylinderGeometry(0.055, 0.05, 1, 6), mail, 0, 0, 0, aim), sFront, hand);
-  add(new THREE.SphereGeometry(0.06, 8, 6), skin, hand.x, hand.y, hand.z, aim);
-  const ARC = Math.PI * 0.62, R = 0.9; // longbow
-  const bow = add(new THREE.TorusGeometry(R, 0.022, 5, 24, ARC), yew, hand.x - R, 0, 0, aim); bow.rotation.z = -ARC / 2;
+  for (const z of [-0.13, 0.13]) { add(new THREE.CylinderGeometry(0.1, 0.1, 0.42, 10), dark, 0, 0.27, z); add(new RoundedBoxGeometry(0.3, 0.14, 0.17, 2, 0.05), boot, 0.04, 0.07, z); }
+  const herald = toon(0xffffff, { map: heraldry(i) });
+  add(new RoundedBoxGeometry(0.44, 0.62, 0.62, 3, 0.13), [herald, herald, team, team, team, team], 0, 0.8, 0); // tabard, emblem front and back
+  add(new THREE.CylinderGeometry(0.3, 0.36, 0.2, 16), team, 0, 0.47, 0);
+  add(new THREE.TorusGeometry(0.355, 0.03, 6, 20), gold, 0, 0.38, 0).rotation.x = Math.PI / 2;
+  add(new THREE.CylinderGeometry(0.335, 0.335, 0.08, 16), leather, 0, 0.6, 0);
+  add(new RoundedBoxGeometry(0.06, 0.09, 0.11, 1, 0.02), gold, 0.33, 0.6, 0);
+  add(new THREE.SphereGeometry(0.3, 20, 14), skin, 0, 1.42, 0); // big head
+  add(new THREE.SphereGeometry(0.315, 16, 12, Math.PI * 0.6, Math.PI * 0.8, 0.3, Math.PI * 0.5), hair, 0, 1.4, 0).rotation.y = Math.PI; // hair at the back
+  for (const z of [-0.29, 0.29]) add(new THREE.SphereGeometry(0.07, 8, 6), skin, 0, 1.4, z);
+  for (const z of [-0.1, 0.1]) add(new THREE.SphereGeometry(0.04, 8, 6), eye, 0.27, 1.44, z).scale.set(0.6, 1.3, 1);
+  add(new THREE.SphereGeometry(0.05, 8, 6), skin, 0.3, 1.37, 0);
+  add(new THREE.SphereGeometry(0.345, 22, 12, 0, Math.PI * 2, 0, Math.PI / 2), steel, 0, 1.5, 0).scale.y = 0.95; // round helmet
+  add(new THREE.TorusGeometry(0.36, 0.055, 8, 28), steel, 0, 1.5, 0).rotation.x = Math.PI / 2;
+  add(new THREE.SphereGeometry(0.04, 8, 6), gold, 0.33, 1.56, 0.13);
+  const shine = add(new THREE.SphereGeometry(1, 10, 8), noOutline(new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.75 })), 0.06, 1.77, -0.13);
+  shine.scale.set(0.12, 0.04, 0.07); shine.castShadow = false;
+  const quiver = add(new THREE.CylinderGeometry(0.12, 0.1, 0.58, 12), leather, -0.3, 0.92, 0.12); quiver.rotation.set(0.25, 0, -0.35);
+  add(new THREE.TorusGeometry(0.12, 0.025, 6, 14), wood, 0, 0.29, 0, quiver).rotation.x = Math.PI / 2;
+  const white = mat(0xffffff); white.side = THREE.DoubleSide;
+  for (const [dx, dz] of [[0, 0], [0.05, 0.05], [-0.04, 0.05]]) { add(new THREE.CylinderGeometry(0.015, 0.015, 0.3, 5), wood, dx, 0.4, dz, quiver); add(new THREE.PlaneGeometry(0.1, 0.16), white, dx, 0.55, dz, quiver); }
+  const aim = new THREE.Group(); aim.position.set(0, SHOULDER, 0); root.add(aim); // shoulder pivot, +x = shot direction
+  const sFront = new V(0.02, -0.05, 0.27), hand = new V(0.6, 0, 0.04), sBack = new V(0, -0.05, -0.27);
+  for (const z of [-0.29, 0.29]) add(new THREE.SphereGeometry(0.13, 12, 8), team, 0, -0.05, z, aim);
+  setLimb(add(new THREE.CylinderGeometry(0.09, 0.08, 1, 10), team, 0, 0, 0, aim), sFront, hand);
+  add(new THREE.CylinderGeometry(0.095, 0.095, 0.14, 10), leather, 0.47, 0, 0.06, aim).rotation.z = Math.PI / 2;
+  add(new THREE.SphereGeometry(0.09, 10, 8), leather, hand.x, hand.y, hand.z, aim);
+  const ARC = Math.PI * 0.62, R = 0.8; // chunky longbow
+  const bow = add(new THREE.TorusGeometry(R, 0.045, 8, 28, ARC), wood, hand.x - R, 0, 0, aim); bow.rotation.z = -ARC / 2;
+  add(new THREE.CylinderGeometry(0.06, 0.06, 0.18, 10), gold, hand.x, 0, 0, aim);
   const tipX = hand.x - R + R * Math.cos(ARC / 2), tipY = R * Math.sin(ARC / 2);
   const stringGeo = new THREE.BufferGeometry().setFromPoints([new V(tipX, tipY, 0), new V(tipX, 0, 0), new V(tipX, -tipY, 0)]);
-  aim.add(new THREE.Line(stringGeo, new THREE.LineBasicMaterial({ color: 0xeeeeee })));
-  const armB = add(new THREE.CylinderGeometry(0.05, 0.045, 1, 6), mail, 0, 0, 0, aim);
-  const handB = add(new THREE.SphereGeometry(0.055, 8, 6), skin, 0, 0, 0, aim);
+  aim.add(new THREE.Line(stringGeo, noOutline(new THREE.LineBasicMaterial({ color: 0xffffff }))));
+  const armB = add(new THREE.CylinderGeometry(0.085, 0.075, 1, 10), team, 0, 0, 0, aim);
+  const handB = add(new THREE.SphereGeometry(0.085, 10, 8), leather, 0, 0, 0, aim);
   let nocked = makeArrow(); aim.add(nocked);
   root.rotation.y = i ? Math.PI : 0;
   root.position.set(-f * DIST, WALL_H, 0);
@@ -207,12 +219,13 @@ function endShot() {
 }
 
 // ---------- trajectory preview: first part of the arc only, no wind ----------
-const PREV_N = 14;
+const PREV_N = 16;
+function dotTex() { const c = document.createElement('canvas'); c.width = c.height = 32; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.strokeStyle = '#e8b830'; g.lineWidth = 3; g.beginPath(); g.arc(16, 16, 12, 0, 7); g.fill(); g.stroke(); return new THREE.CanvasTexture(c); }
 const preview = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(PREV_N * 3), 3)),
-  new THREE.PointsMaterial({ color: 0xffffff, size: 6, sizeAttenuation: false, transparent: true, opacity: 0.6, depthWrite: false }));
+  noOutline(new THREE.PointsMaterial({ color: 0xffffff, size: 11, sizeAttenuation: false, map: dotTex(), alphaTest: 0.4, transparent: true, depthWrite: false })));
 preview.visible = false; scene.add(preview);
 function updatePreview() {
-  const { pos, vel } = launch(S.turn, S.aim), attr = preview.geometry.attributes.position, g = G * ARROWS[S.types[S.turn]].g, dt = 1 / 30;
+  const { pos, vel } = launch(S.turn, S.aim), attr = preview.geometry.attributes.position, g = G * ARROWS[S.types[S.turn]].g, dt = 1 / 34;
   for (let k = 0; k < PREV_N; k++) {
     vel.y -= g * dt; pos.x += vel.x * dt; pos.y += vel.y * dt; pos.z += vel.z * dt;
     attr.setXYZ(k, pos.x, pos.y, pos.z);
@@ -318,11 +331,12 @@ function updateHud() {
   const online = S.mode === 'online';
   archers.forEach((a, i) => {
     $(`#hp${i} i`).style.width = `${S.hp[i]}%`;
-    $(`#hp${i} span`).textContent = `${NAMES[i]}${online && i === S.me ? ' (you)' : ''} ${S.hp[i]}`;
+    $(`#hp${i} .num`).textContent = S.hp[i];
+    $(`#hp${i} .you`).classList.toggle('hidden', !(online && i === S.me));
   });
   $('#turn').textContent = online ? (S.turn === S.me ? 'Your turn' : `${NAMES[S.turn]}'s turn`) : `${NAMES[S.turn]}'s turn`;
-  $('#turn').style.color = S.turn ? '#a3221b' : '#1f4fae';
-  $('#wind span').textContent = Math.hypot(S.wind.x, S.wind.z).toFixed(1);
+  $('#turn').className = S.turn ? 'red' : 'blue';
+  $('#windNum').textContent = Math.hypot(S.wind.x, S.wind.z).toFixed(1);
   const mine = myTurn();
   show('#types', mine);
   document.querySelectorAll('#types button').forEach(b => b.classList.toggle('on', b.dataset.t === S.types[S.turn]));
@@ -332,27 +346,28 @@ function updateHud() {
 function updateWindArrow() {
   const c = archers[S.turn].root.position.clone().add(new V(0, 2, 0));
   const a = c.clone().project(camera), b = c.clone().add(new V(S.wind.x, 0, S.wind.z).normalize().multiplyScalar(4)).project(camera);
-  $('#wind b').style.transform = `rotate(${Math.atan2(-(b.y - a.y) / camera.aspect, b.x - a.x)}rad)`;
+  const ang = Math.atan2(-(b.y - a.y) / camera.aspect, b.x - a.x), left = Math.cos(ang) < 0; // flag flies the way the wind blows on screen
+  $('#windFlag').style.transform = `scaleX(${left ? -1 : 1}) rotate(${clamp(Math.atan2(Math.sin(ang), Math.abs(Math.cos(ang))) * -0.5, -0.5, 0.5)}rad)`;
 }
 
 // ---------- camera ----------
 const camPos = new V(), camLook = new V();
 let camJump = true;
 function camTarget(t) {
-  if (S.phase === 'menu') { const a = t * 0.06 + 1.2; return [new V(Math.cos(a) * 34, 13, Math.sin(a) * 34), new V(0, 3, 0)]; }
+  if (S.phase === 'menu') { const a = t * 0.06 + 1.2; return [new V(Math.cos(a) * 30, 17, Math.sin(a) * 30), new V(0, 4, 0)]; }
   const v = viewer(), fv = archers[v].f;
   const lead = S.play ? playLead() : null, focus = lead ? lead.m.getWorldPosition(new V()) : S.phase === 'over' ? S.focus : null;
   if (focus) {
     const fs = S.play ? archers[S.play.m.shooter].f : fv;
     return [focus.clone().add(new V(-3 * fs, 2.2, 5.5 * fv)), focus.clone().add(new V(1.5 * fs, 0, 0))];
   }
-  const a = archers[v].root.position, portrait = camera.aspect < 0.9; // over-the-shoulder aim view
-  return portrait ? [a.clone().add(new V(-5.6 * fv, 2.8, 2.1 * fv)), a.clone().add(new V(10 * fv, 2.4, -0.4 * fv))]
-                  : [a.clone().add(new V(-5 * fv, 2.6, 2.4 * fv)), a.clone().add(new V(14 * fv, 1.8, -0.6 * fv))];
+  const a = archers[v].root.position, portrait = camera.aspect < 0.9; // close over-the-shoulder view, archer big in the lower left
+  return portrait ? [a.clone().add(new V(-3.45 * fv, 2.95, 1.5 * fv)), a.clone().add(new V(10 * fv, 0.06, -1.85 * fv))]
+                  : [a.clone().add(new V(-5.1 * fv, 2.9, 2.3 * fv)), a.clone().add(new V(10 * fv, 0.78, -0.9 * fv))];
 }
 function pipRect() {
-  const portrait = innerWidth < innerHeight, w = Math.round(innerWidth * (portrait ? 0.34 : 0.18)), h = Math.round(w * (portrait ? 1.2 : 0.85));
-  return { x: innerWidth - w - 8, y: 58, w, h };
+  const portrait = innerWidth < innerHeight, w = Math.round(innerWidth * (portrait ? 0.3 : 0.16)), h = Math.round(w * (portrait ? 1.15 : 0.85));
+  return { x: innerWidth - w - 10, y: 74, w, h };
 }
 function resize() {
   renderer.setSize(innerWidth, innerHeight);
@@ -372,7 +387,7 @@ function frame() {
   if (S.play) updatePlay(dt);
   if (flashT > 0 && (flashT -= dt) <= 0 && !drag) $('#readout').textContent = '';
   arena.update(dt, time, S.phase === 'menu' ? { x: 1.5, z: 0.5 } : S.wind, camera.position, sfx);
-  const [tp, tl] = camTarget(time), k = camJump ? 1 : 1 - Math.exp(-dt * (S.phase === 'fly' ? 10 : 3));
+  const [tp, tl] = camTarget(time), k = camJump ? 1 : 1 - Math.exp(-dt * (S.phase === 'fly' ? 10 : 4.5));
   camPos.lerp(tp, k); camLook.lerp(tl, k); camJump = false;
   camera.position.copy(camPos); camera.lookAt(camLook);
   if (shake > 0.002) { camera.position.add(new V(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(shake)); shake *= Math.exp(-dt * 7); }
@@ -384,17 +399,17 @@ function frame() {
   }
   if (S.phase !== 'menu') updateWindArrow();
   renderer.setViewport(0, 0, innerWidth, innerHeight);
-  renderer.render(scene, camera);
+  effect.render(scene, camera);
   const pip = S.phase === 'aim' || S.phase === 'wait';
   show('#pip', pip);
   if (pip) { // picture-in-picture of the opponent
     const o = archers[1 - viewer()], r = pipRect(), fv = archers[viewer()].f;
-    pipCam.position.copy(o.root.position).add(new V(4.2 * o.f, 2.9, 0.4 * fv));
-    pipCam.lookAt(o.root.position.clone().add(new V(0, 1.25, 0)));
-    $('#pip span').textContent = NAMES[1 - viewer()];
+    pipCam.position.copy(o.root.position).add(new V(4.4 * o.f, 2.4, 0.6 * fv));
+    pipCam.lookAt(o.root.position.clone().add(new V(0, 1.05, 0)));
+    $('#pip span').textContent = NAMES[1 - viewer()]; $('#pip span').style.background = viewer() ? '#2f6fe0' : '#e0342c';
     renderer.setScissorTest(true);
     renderer.setViewport(r.x, innerHeight - r.y - r.h, r.w, r.h); renderer.setScissor(r.x, innerHeight - r.y - r.h, r.w, r.h);
-    renderer.render(scene, pipCam);
+    effect.render(scene, pipCam);
     renderer.setScissorTest(false);
   }
   requestAnimationFrame(frame);

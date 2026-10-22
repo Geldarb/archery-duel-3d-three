@@ -2,7 +2,7 @@
 import { createRequire } from 'module';
 import fs from 'fs';
 const puppeteer = createRequire('/tmp/ad3t-pw/')('puppeteer-core');
-const [,, base = 'http://localhost:3931', out = 'shots', which = 'all'] = process.argv;
+const [,, base = 'http://localhost:3947', out = 'shots', which = 'all'] = process.argv;
 fs.mkdirSync(out, { recursive: true });
 const b = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', headless: 'new', args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required'] });
 const errors = [];
