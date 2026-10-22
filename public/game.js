@@ -233,23 +233,25 @@ function updatePreview() {
   attr.needsUpdate = true; preview.geometry.computeBoundingSphere(); preview.visible = true;
 }
 
-// ---------- input: pull back like a bowstring. Pull length = power, pull steepness = elevation. No sideways aim. ----------
+// ---------- input: drag down = power, drag sideways = elevation (toward the enemy = arc lands further). No sideways aim. ----------
 let drag = null, lastCreak = 0, lastAimSend = 0;
 const canvas = renderer.domElement;
-const PITCH_MIN = 5, PITCH_MAX = 65; // degrees: flat sideways pull .. straight-down pull
-function dragAim(dx, dy) { // dx/dy = pointer movement in px (down = +dy); left and right pulls behave the same
-  const t = clamp(Math.hypot(dx, dy) / (0.4 * Math.min(innerHeight, innerWidth * 1.6)), 0, 1);
-  const steep = Math.atan2(Math.max(dy, 0), Math.abs(dx)) / (Math.PI / 2); // 0 = sideways, 1 = straight down
-  return { t, aim: { pitch: (PITCH_MIN + (PITCH_MAX - PITCH_MIN) * steep) * DEG, power: 0.15 + 0.85 * t } };
+const PITCH_MIN = 5, PITCH_MAX = 45; // up to 45° so "more angle" always means "further"
+const lastPitch = [25, 25];          // each archer's drag starts from their previous angle
+function dragAim(dx, dy, startPitch) { // dx/dy = pointer movement in px; the enemy is always to the right on screen
+  const t = clamp(dy / (0.4 * innerHeight), 0, 1);
+  const deg = clamp(startPitch + dx / (0.5 * innerWidth) * (PITCH_MAX - PITCH_MIN), PITCH_MIN, PITCH_MAX);
+  return { t, aim: { pitch: deg * DEG, power: 0.15 + 0.85 * t } };
 }
 canvas.addEventListener('pointerdown', e => {
   sfx.unlock();
   if (!myTurn()) return;
-  drag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId);
+  drag = { x: e.clientX, y: e.clientY, p: lastPitch[S.turn] }; canvas.setPointerCapture(e.pointerId);
 });
 canvas.addEventListener('pointermove', e => {
   if (!drag || !myTurn()) return;
-  const { t, aim } = dragAim(e.clientX - drag.x, e.clientY - drag.y);
+  const { t, aim } = dragAim(e.clientX - drag.x, e.clientY - drag.y, drag.p);
+  lastPitch[S.turn] = aim.pitch / DEG;
   S.draw = t; S.aim = aim;
   archers[S.turn].pose(aim.pitch, t, true, S.types[S.turn]);
   if (Math.abs(t - lastCreak) > 0.08) { sfx.creak(t); lastCreak = t; }
@@ -257,8 +259,8 @@ canvas.addEventListener('pointermove', e => {
   const tip = $('#aimTip'); // readout next to the finger
   tip.innerHTML = `<b>${Math.round(aim.power * 100)}%</b> · <i>${Math.round(aim.pitch / DEG)}°</i>`;
   Object.assign(tip.style, { left: `${clamp(e.clientX, 50, innerWidth - 50)}px`, top: `${Math.max(e.clientY - 34, 70)}px` });
-  show('#aimTip', t >= 0.04);
-  if (t >= 0.04) updatePreview(); else preview.visible = false;
+  show('#aimTip', true);
+  updatePreview(); // angle-only drags still show the arc; a shot needs some downward pull
   if (S.mode === 'online' && performance.now() - lastAimSend > 100) { lastAimSend = performance.now(); sock.emit('aim', { pitch: aim.pitch, draw: t }); }
 });
 const endDrag = () => {
@@ -349,7 +351,7 @@ function updateHud() {
   const mine = myTurn();
   show('#types', mine);
   document.querySelectorAll('#types button').forEach(b => b.classList.toggle('on', b.dataset.t === S.types[S.turn]));
-  $('#hint').textContent = S.phase === 'aim' && S.draw === 0 ? (mine ? 'Pull back: longer = power, steeper = higher' : 'Opponent is aiming…') : '';
+  $('#hint').textContent = S.phase === 'aim' && S.draw === 0 ? (mine ? 'Drag down = power · sideways = nearer / further' : 'Opponent is aiming…') : '';
   $('#muteBtn').textContent = `Sound: ${sfx.isMuted() ? 'off' : 'on'}`;
 }
 
@@ -421,7 +423,8 @@ updateHud(); frame();
 
 // test hook (scripted checks)
 window.__game = {
-  S, archers,
+  S, archers, camera,
+  screenX: i => archers[i].root.position.clone().project(camera).x, // -1..1, left..right
   get world() { return world; },
   startHot,
   simulate: (aim, type = 'normal') => simulateShot(world, S.turn, aim, S.wind, type, S.merlons),

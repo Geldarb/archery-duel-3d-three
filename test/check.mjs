@@ -48,23 +48,32 @@ if (which !== 'online') {
   // hot-seat full cycle with each arrow type
   const pg = await open(390, 844, true);
   await pg.click('#arenas button[data-a="field"]'); await pg.click('#hotBtn'); await sleep(800);
-  // drag mapping: same pull length at different steepness -> same power, different angle; same steepness, different length -> same angle, different power
+  // drag mapping, checked from both players' views: vertical = power only, horizontal = angle only, dragging toward the enemy = further
   {
-    const cx = 195, cy = 250, read = () => pg.evaluate(() => ({ pitch: Math.round(__game.S.aim.pitch * 573) / 10, power: Math.round(__game.S.aim.power * 1000) / 1000, yaw: __game.S.aim.yaw }));
-    await pg.mouse.move(cx, cy); await pg.mouse.down();
-    const at = async (dx, dy) => { await pg.mouse.move(cx + dx, cy + dy, { steps: 3 }); await sleep(80); return read(); };
-    const steep = await at(0, 160), flat = await at(-160, 0), diag = await at(-113, 113), diagL = await at(-170, 170), diagR = await at(113, 113);
-    const tipShown = await pg.$eval('#aimTip', e => !e.classList.contains('hidden') && e.textContent);
-    await at(0, 2); await pg.mouse.up(); await sleep(300); // released inside the dead zone: no shot
-    console.log('drag mapping', { steep, flat, diag, diagL, diagR, tipShown });
-    const near = (x, y) => Math.abs(x - y) < 0.01;
-    assert(near(steep.power, flat.power) && near(flat.power, diag.power), 'same length -> same power');
-    assert(steep.pitch > diag.pitch && diag.pitch > flat.pitch, 'steeper pull -> higher angle');
-    assert(diagL.pitch === diag.pitch && diagL.power > diag.power, 'longer pull -> more power, same angle');
-    assert(diagR.pitch === diag.pitch && diagR.power === diag.power, 'left/right pulls are the same');
-    assert([steep, flat, diag].every(a => a.yaw === undefined), 'no yaw');
-    assert(tipShown && /%/.test(tipShown) && /°/.test(tipShown), 'finger readout');
-    assert((await st(pg)).turn === 0 && (await st(pg)).phase === 'aim', 'dead-zone release does not shoot');
+    const read = () => pg.evaluate(() => ({ pitch: Math.round(__game.S.aim.pitch * 5729.6) / 100, power: Math.round(__game.S.aim.power * 1000) / 1000, yaw: __game.S.aim.yaw }));
+    const near = (x, y) => Math.abs(x - y) < 0.011;
+    for (const who of [0, 1]) {
+      if ((await st(pg)).turn !== who) { // let Blue take a (missing) shot so Red gets the view
+        await pg.evaluate(() => __game.shootAim({ pitch: 0.2, power: 0.25 }, 'normal')); await settle(pg); await sleep(1500);
+      }
+      const sx = await pg.evaluate(w => [__game.screenX(w), __game.screenX(1 - w)], who);
+      assert(sx[1] > sx[0], `enemy is to the right in ${who ? 'Red' : 'Blue'}'s view`);
+      const cx = 195, cy = 250;
+      await pg.mouse.move(cx, cy); await pg.mouse.down();
+      const at = async (dx, dy) => { await pg.mouse.move(cx + dx, cy + dy, { steps: 3 }); await sleep(80); return read(); };
+      const base = await at(0, 120), down = await at(0, 200), right = await at(80, 120), left = await at(-80, 120), rightDown = await at(80, 200);
+      const tipShown = await pg.$eval('#aimTip', e => !e.classList.contains('hidden') && e.textContent);
+      await at(0, 0); await pg.mouse.up(); await sleep(300); // no downward pull at release: angle only, no shot
+      const far = await pg.evaluate((pr, pl) => { __game.setWind(0, 0); const d = p => { const a = __game.simulate({ pitch: p, power: 0.5 }).arrows[0].res.pos; return Math.abs(a[0] - (__game.S.turn ? 15 : -15)); }; return [d(pl / 57.296), d(pr / 57.296)]; }, right.pitch, left.pitch);
+      console.log('drag mapping', who ? 'Red' : 'Blue', { base, down, right, left, rightDown, tipShown, landNearFar: far.map(v => v.toFixed(1)), screenX: sx.map(v => v.toFixed(2)) });
+      assert(near(base.pitch, down.pitch) && down.power > base.power, 'vertical drag changes power only');
+      assert(near(base.power, right.power) && near(base.power, left.power) && right.pitch > base.pitch && left.pitch < base.pitch, 'horizontal drag changes angle only');
+      assert(near(rightDown.pitch, right.pitch) && near(rightDown.power, down.power), 'both independent in one gesture');
+      assert(far[1] > far[0], 'dragging toward the enemy lands further');
+      assert([base, down, right].every(a => a.yaw === undefined), 'no yaw');
+      assert(tipShown && /%/.test(tipShown) && /°/.test(tipShown), 'finger readout');
+      assert((await st(pg)).turn === who && (await st(pg)).phase === 'aim', 'angle-only release does not shoot');
+    }
     const lane = await pg.evaluate(() => { __game.setWind(3.5, 0); let worst = 0, sym = 0;
       for (let k = 0; k < 40; k++) { const aim = { pitch: (5 + Math.random() * 60) / 57.3, power: 0.15 + Math.random() * 0.85 };
         for (const t of ['normal', 'heavy']) for (const a of __game.simulate(aim, t).arrows) for (const p of [...a.pts, a.res.pos]) worst = Math.max(worst, Math.abs(p[2]));
@@ -73,6 +82,7 @@ if (which !== 'online') {
     console.log('lane check (max |z| of normal/heavy arrows, split asymmetry)', lane);
     assert(lane.worst === 0, 'shots stay on the opponent line');
   }
+  if ((await st(pg)).turn === 1) { await pg.evaluate(() => __game.shootAim({ pitch: 0.2, power: 0.25 }, 'normal')); await settle(pg); await sleep(300); }
   // merlons: split side arrows chip merlons; Blue cracks a Red merlon, Red cracks a Blue one, Blue knocks the same Red merlon off
   let redM = [8, 9, 7, 10, 6, 11];
   for (const [ids, type, want] of [[null, 'split', 1], [[3, 2, 4, 1, 5, 0], 'split', 1], [null, 'split', 0]]) {
