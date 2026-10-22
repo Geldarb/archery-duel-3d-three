@@ -4,10 +4,10 @@ import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { DIST, HP, ARROWS, ARENA_IDS, WALL_H, SHOULDER, makeWorld, simulateShot, applyShot, applyResult, fullMerlons, winnerOf, randomWind, launch, G } from './sim.js';
 import { buildArena, heraldry, toon, noOutline } from './world.js';
+import { PALETTE, FLETCH, HELMETS, EMBLEMS, BOWS, TAUNTS, sanitizeLook, teamColors, hexOf, cleanName } from './looks.js';
 import * as sfx from './audio.js';
 
 const V = THREE.Vector3, X = new V(1, 0, 0), $ = s => document.querySelector(s), DEG = Math.PI / 180;
-const NAMES = ['Blue', 'Red'], COLORS = [0x2f6fd6, 0xd63a2f];
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const mat = c => toon(c);
 const show = (sel, on) => $(sel).classList.toggle('hidden', !on);
@@ -26,7 +26,7 @@ sun.position.set(-12, 40, 22); sun.castShadow = true; sun.shadow.mapSize.set(102
 Object.assign(sun.shadow.camera, { left: -26, right: 26, top: 22, bottom: -22, far: 110 }); sun.shadow.radius = 4;
 scene.add(sun);
 let world = null, arena = null;
-function setArena(id) { if (arena) arena.dispose(); world = makeWorld(id); arena = buildArena(scene, world, { hemi, sun }); }
+function setArena(id) { if (arena) arena.dispose(); world = makeWorld(id); arena = buildArena(scene, world, { hemi, sun }); arena.setTeamColors(cols); }
 
 // ---------- archers & arrows ----------
 function setLimb(mesh, a, b) {
@@ -34,14 +34,15 @@ function setLimb(mesh, a, b) {
   mesh.position.copy(a).addScaledVector(d, 0.5); mesh.scale.set(1, d.length(), 1);
   mesh.quaternion.setFromUnitVectors(new V(0, 1, 0), d.normalize());
 }
-function makeArrow(type = 'normal') { // chunky cartoon arrow, tip at origin, points along +x
+function makeArrow(type = 'normal', fletch = 0xffffff) { // chunky cartoon arrow, tip at origin, points along +x; fletching in the player's colour
   const g = new THREE.Group(), heavy = type === 'heavy', r = heavy ? 0.04 : 0.028;
   const shaft = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.85, 6), mat(heavy ? 0x6b4423 : 0xc98a4b));
   shaft.rotation.z = Math.PI / 2; shaft.position.x = -0.5;
   const tip = new THREE.Mesh(new THREE.ConeGeometry(heavy ? 0.09 : 0.065, heavy ? 0.22 : 0.17, 4), mat(heavy ? 0x7d8794 : 0xdfe4ea));
   tip.rotation.z = -Math.PI / 2; tip.position.x = -0.08;
   g.add(shaft, tip);
-  const fl = mat(type === 'split' ? 0xffc928 : heavy ? 0xe0342c : 0xffffff); fl.side = THREE.DoubleSide;
+  if (type === 'split') { const band = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.08, 8), mat(0xffc928)); band.rotation.z = Math.PI / 2; band.position.x = -0.3; g.add(band); }
+  const fl = mat(fletch); fl.side = THREE.DoubleSide;
   for (let k = 0; k < 3; k++) {
     const f = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 0.1), fl);
     f.position.set(-0.83, 0.06, 0);
@@ -50,13 +51,13 @@ function makeArrow(type = 'normal') { // chunky cartoon arrow, tip at origin, po
   g.traverse(o => { o.castShadow = true; });
   return g;
 }
-function makeArcher(i) { // chunky big-headed cartoon archer
-  const f = i ? -1 : 1, root = new THREE.Group();
-  const skin = mat(0xffc9a0), team = mat(COLORS[i]), dark = mat(i ? 0x6e1a16 : 0x173a7a), boot = mat(0x6b3f1d), leather = mat(0x9a5b2a), gold = mat(0xf4c430);
-  const hair = mat(0x5a3418), eye = mat(0x1d1d24), steel = mat(i ? 0xd8312b : 0xc9d0da), wood = mat(0x8f5326);
-  const add = (geo, m, x, y, z, parent = root) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = true; parent.add(o); return o; };
+function makeArcher(i, look, color, parent = scene) { // chunky big-headed cartoon archer, dressed from a player look
+  const f = i ? -1 : 1, root = new THREE.Group(), fletch = hexOf(FLETCH, look.fletch);
+  const skin = mat(0xffc9a0), team = mat(color), dark = mat(new THREE.Color(color).multiplyScalar(0.45)), boot = mat(0x6b3f1d), leather = mat(0x9a5b2a), gold = mat(0xf4c430);
+  const hair = mat(0x5a3418), eye = mat(0x1d1d24), steel = mat(0xc9d0da), wood = mat(0x8f5326);
+  const add = (geo, m, x, y, z, p = root) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = true; p.add(o); return o; };
   for (const z of [-0.13, 0.13]) { add(new THREE.CylinderGeometry(0.1, 0.1, 0.42, 10), dark, 0, 0.27, z); add(new RoundedBoxGeometry(0.3, 0.14, 0.17, 2, 0.05), boot, 0.04, 0.07, z); }
-  const herald = toon(0xffffff, { map: heraldry(i) });
+  const herald = toon(0xffffff, { map: heraldry(color, look.emblem) });
   add(new RoundedBoxGeometry(0.44, 0.62, 0.62, 3, 0.13), [herald, herald, team, team, team, team], 0, 0.8, 0); // tabard, emblem front and back
   add(new THREE.CylinderGeometry(0.3, 0.36, 0.2, 16), team, 0, 0.47, 0);
   add(new THREE.TorusGeometry(0.355, 0.03, 6, 20), gold, 0, 0.38, 0).rotation.x = Math.PI / 2;
@@ -67,38 +68,63 @@ function makeArcher(i) { // chunky big-headed cartoon archer
   for (const z of [-0.29, 0.29]) add(new THREE.SphereGeometry(0.07, 8, 6), skin, 0, 1.4, z);
   for (const z of [-0.1, 0.1]) add(new THREE.SphereGeometry(0.04, 8, 6), eye, 0.27, 1.44, z).scale.set(0.6, 1.3, 1);
   add(new THREE.SphereGeometry(0.05, 8, 6), skin, 0.3, 1.37, 0);
-  add(new THREE.SphereGeometry(0.345, 22, 12, 0, Math.PI * 2, 0, Math.PI / 2), steel, 0, 1.5, 0).scale.y = 0.95; // round helmet
-  add(new THREE.TorusGeometry(0.36, 0.055, 8, 28), steel, 0, 1.5, 0).rotation.x = Math.PI / 2;
-  add(new THREE.SphereGeometry(0.04, 8, 6), gold, 0.33, 1.56, 0.13);
-  const shine = add(new THREE.SphereGeometry(1, 10, 8), noOutline(new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.75 })), 0.06, 1.77, -0.13);
-  shine.scale.set(0.12, 0.04, 0.07); shine.castShadow = false;
+  const shine = (x, y, z) => { const o = add(new THREE.SphereGeometry(1, 10, 8), noOutline(new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.75 })), x, y, z); o.scale.set(0.12, 0.04, 0.07); o.castShadow = false; };
+  if (look.helmet === 'round') {
+    add(new THREE.SphereGeometry(0.345, 22, 12, 0, Math.PI * 2, 0, Math.PI / 2), steel, 0, 1.5, 0).scale.y = 0.95;
+    add(new THREE.TorusGeometry(0.36, 0.055, 8, 28), steel, 0, 1.5, 0).rotation.x = Math.PI / 2;
+    add(new THREE.SphereGeometry(0.04, 8, 6), gold, 0.33, 1.56, 0.13); shine(0.06, 1.77, -0.13);
+  } else if (look.helmet === 'kettle') { // wide-brimmed kettle hat
+    add(new THREE.SphereGeometry(0.32, 22, 12, 0, Math.PI * 2, 0, Math.PI / 2), steel, 0, 1.53, 0).scale.y = 0.85;
+    add(new THREE.CylinderGeometry(0.52, 0.52, 0.045, 30), steel, 0, 1.53, 0);
+    add(new THREE.TorusGeometry(0.32, 0.03, 6, 24), gold, 0, 1.56, 0).rotation.x = Math.PI / 2; shine(0.05, 1.77, -0.12);
+  } else if (look.helmet === 'hood') { // open-faced hood with a droopy tail
+    const hood = mat(color); hood.side = THREE.DoubleSide;
+    add(new THREE.SphereGeometry(0.345, 22, 14, Math.PI + 0.8, Math.PI * 2 - 1.6, 0, Math.PI * 0.8), hood, 0, 1.43, 0);
+    add(new THREE.ConeGeometry(0.13, 0.42, 12), hood, -0.38, 1.4, 0).rotation.z = Math.PI / 2 + 0.6;
+  } else if (look.helmet === 'crown') {
+    add(new THREE.SphereGeometry(0.315, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.36), hair, 0, 1.42, 0);
+    const band = mat(0xffcf33); band.side = THREE.DoubleSide;
+    add(new THREE.CylinderGeometry(0.25, 0.235, 0.15, 20, 1, true), band, 0, 1.7, 0);
+    for (let k = 0; k < 6; k++) { const a = k / 6 * Math.PI * 2; add(new THREE.ConeGeometry(0.05, 0.14, 6), band, Math.cos(a) * 0.245, 1.83, Math.sin(a) * 0.245); }
+    add(new THREE.SphereGeometry(0.045, 10, 8), mat(0xe0342c), 0.25, 1.7, 0);
+  } else { // feathered cap
+    add(new THREE.SphereGeometry(0.33, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), team, 0, 1.52, 0).scale.y = 0.72;
+    add(new THREE.TorusGeometry(0.33, 0.045, 8, 26), dark, 0, 1.52, 0).rotation.x = Math.PI / 2;
+    const feather = add(new THREE.SphereGeometry(1, 12, 8), mat(fletch === 0xffffff ? 0xffffff : fletch), -0.12, 1.86, 0.2); feather.scale.set(0.06, 0.3, 0.035); feather.rotation.z = 0.7;
+  }
   const quiver = add(new THREE.CylinderGeometry(0.12, 0.1, 0.58, 12), leather, -0.3, 0.92, 0.12); quiver.rotation.set(0.25, 0, -0.35);
   add(new THREE.TorusGeometry(0.12, 0.025, 6, 14), wood, 0, 0.29, 0, quiver).rotation.x = Math.PI / 2;
-  const white = mat(0xffffff); white.side = THREE.DoubleSide;
-  for (const [dx, dz] of [[0, 0], [0.05, 0.05], [-0.04, 0.05]]) { add(new THREE.CylinderGeometry(0.015, 0.015, 0.3, 5), wood, dx, 0.4, dz, quiver); add(new THREE.PlaneGeometry(0.1, 0.16), white, dx, 0.55, dz, quiver); }
+  const fl = mat(fletch); fl.side = THREE.DoubleSide;
+  for (const [dx, dz] of [[0, 0], [0.05, 0.05], [-0.04, 0.05]]) { add(new THREE.CylinderGeometry(0.015, 0.015, 0.3, 5), wood, dx, 0.4, dz, quiver); add(new THREE.PlaneGeometry(0.1, 0.16), fl, dx, 0.55, dz, quiver); }
   const aim = new THREE.Group(); aim.position.set(0, SHOULDER, 0); root.add(aim); // shoulder pivot, +x = shot direction
   const sFront = new V(0.02, -0.05, 0.27), hand = new V(0.6, 0, 0.04), sBack = new V(0, -0.05, -0.27);
   for (const z of [-0.29, 0.29]) add(new THREE.SphereGeometry(0.13, 12, 8), team, 0, -0.05, z, aim);
   setLimb(add(new THREE.CylinderGeometry(0.09, 0.08, 1, 10), team, 0, 0, 0, aim), sFront, hand);
   add(new THREE.CylinderGeometry(0.095, 0.095, 0.14, 10), leather, 0.47, 0, 0.06, aim).rotation.z = Math.PI / 2;
   add(new THREE.SphereGeometry(0.09, 10, 8), leather, hand.x, hand.y, hand.z, aim);
-  const ARC = Math.PI * 0.62, R = 0.8; // chunky longbow
-  const bow = add(new THREE.TorusGeometry(R, 0.045, 8, 28, ARC), wood, hand.x - R, 0, 0, aim); bow.rotation.z = -ARC / 2;
-  add(new THREE.CylinderGeometry(0.06, 0.06, 0.18, 10), gold, hand.x, 0, 0, aim);
-  const tipX = hand.x - R + R * Math.cos(ARC / 2), tipY = R * Math.sin(ARC / 2);
+  const recurve = look.bow === 'recurve', ARC = Math.PI * (recurve ? 0.58 : 0.62), R = recurve ? 0.62 : 0.8; // cosmetic bow styles
+  const limbM = look.bow === 'gold' ? mat(0xffcf33) : recurve ? mat(0x5a3418) : wood;
+  const bow = add(new THREE.TorusGeometry(R, recurve ? 0.05 : 0.045, 8, 28, ARC), limbM, hand.x - R, 0, 0, aim); bow.rotation.z = -ARC / 2;
+  add(new THREE.CylinderGeometry(0.06, 0.06, 0.18, 10), look.bow === 'gold' ? mat(0xffffff) : gold, hand.x, 0, 0, aim);
+  if (look.bow === 'gold') add(new THREE.SphereGeometry(0.05, 10, 8), mat(0xe0342c), hand.x + 0.05, 0, 0, aim);
+  let tipX = hand.x - R + R * Math.cos(ARC / 2), tipY = R * Math.sin(ARC / 2);
+  if (recurve) { // tips curl forward
+    for (const sg of [1, -1]) add(new THREE.CylinderGeometry(0.04, 0.03, 0.2, 8), limbM, tipX + 0.06, sg * (tipY + 0.07), 0, aim).rotation.z = sg * -0.75;
+    tipX += 0.12; tipY += 0.13;
+  }
   const stringGeo = new THREE.BufferGeometry().setFromPoints([new V(tipX, tipY, 0), new V(tipX, 0, 0), new V(tipX, -tipY, 0)]);
   aim.add(new THREE.Line(stringGeo, noOutline(new THREE.LineBasicMaterial({ color: 0xffffff }))));
   const armB = add(new THREE.CylinderGeometry(0.085, 0.075, 1, 10), team, 0, 0, 0, aim);
   const handB = add(new THREE.SphereGeometry(0.085, 10, 8), leather, 0, 0, 0, aim);
-  let nocked = makeArrow(); aim.add(nocked);
+  let nocked = makeArrow('normal', fletch); aim.add(nocked);
   root.rotation.y = i ? Math.PI : 0;
   root.position.set(-f * DIST, WALL_H, 0);
-  scene.add(root);
+  parent.add(root);
   const a = {
-    root, f,
+    root, f, fletch,
     pose(pitch, draw, showArrow, type) {
       aim.rotation.set(0, 0, pitch);
-      if (type && nocked.userData.type !== type) { aim.remove(nocked); nocked = makeArrow(type); nocked.userData.type = type; aim.add(nocked); }
+      if (type && nocked.userData.type !== type) { aim.remove(nocked); nocked = makeArrow(type, fletch); nocked.userData.type = type; aim.add(nocked); }
       const nx = tipX - 0.42 * draw, nock = new V(nx, 0, 0);
       stringGeo.attributes.position.setX(1, nx); stringGeo.attributes.position.needsUpdate = true;
       setLimb(armB, sBack, nock); handB.position.copy(nock);
@@ -108,7 +134,24 @@ function makeArcher(i) { // chunky big-headed cartoon archer
   a.pose(0.5, 0, true);
   return a;
 }
-const archers = [makeArcher(0), makeArcher(1)];
+// ---------- player looks (cosmetic) ----------
+const loadLook = slot => { try { return sanitizeLook(JSON.parse(localStorage.getItem(`ad3t-look-${slot}`)), slot); } catch { return sanitizeLook(null, slot); } };
+const saveLook = (slot, l) => { try { localStorage.setItem(`ad3t-look-${slot}`, JSON.stringify(l)); } catch {} };
+const css = c => '#' + c.toString(16).padStart(6, '0');
+let looks = [loadLook(0), loadLook(1)], cols = teamColors(looks[0], looks[1]);
+const archers = [makeArcher(0, looks[0], cols[0]), makeArcher(1, looks[1], cols[1])];
+function dispose(o) { o.removeFromParent(); o.traverse(m => { if (m.geometry) m.geometry.dispose(); }); }
+function setLooks(ls) { // rebuild both archers and recolour castles/HUD
+  looks = ls.map((l, i) => sanitizeLook(l, i)); cols = teamColors(looks[0], looks[1]);
+  for (const i of [0, 1]) { dispose(archers[i].root); archers[i] = makeArcher(i, looks[i], cols[i]); }
+  if (arena) arena.setTeamColors(cols);
+  for (const i of [0, 1]) {
+    $(`#hp${i} i`).style.background = `linear-gradient(${css(new THREE.Color(cols[i]).lerp(new THREE.Color(0xffffff), 0.3).getHex())}, ${css(cols[i])})`;
+    $(`#hp${i} .shield path`).setAttribute('fill', css(cols[i]));
+  }
+}
+const nameOf = i => looks[i].name;
+
 const stuck = [];
 
 // ---------- state ----------
@@ -117,7 +160,8 @@ const S = { mode: 'menu', phase: 'menu', me: 0, turn: 0, hp: [HP, HP], merlons: 
 const viewer = () => (S.mode === 'online' ? S.me : S.turn);
 const myTurn = () => S.phase === 'aim' && (S.mode === 'hot' || S.turn === S.me);
 
-function startMatch({ arenaId, mode, me = 0, turn = 0, hp = [HP, HP], merlons = fullMerlons(), wind }) {
+function startMatch({ arenaId, mode, me = 0, turn = 0, hp = [HP, HP], merlons = fullMerlons(), wind, looks: ls = [loadLook(0), loadLook(1)] }) {
+  setLooks(ls);
   if (arenaId !== S.arenaId || !world) setArena(arenaId);
   for (const a of stuck) a.removeFromParent();
   stuck.length = 0;
@@ -137,6 +181,7 @@ function goHome() {
   Object.assign(S, { mode: 'menu', phase: 'menu', play: null, queue: [] });
   ['#hud', '#menuBtn', '#bottom', '#pip', '#lobby', '#over', '#menu', '#notice'].forEach(s => show(s, false));
   show('#home', true); $('#homeMsg').textContent = '';
+  setLooks([loadLook(0), loadLook(1)]);
 }
 function notice(msg) {
   if (S.mode !== 'online') return;
@@ -156,7 +201,7 @@ function fire() {
 function playShot(m) {
   if (S.play) { S.queue.push(m); return; }
   archers[m.shooter].pose(m.aim.pitch, 0, false);
-  const arrows = m.sim.arrows.map(x => { const mesh = makeArrow(m.sim.type); mesh.visible = false; scene.add(mesh); stuck.push(mesh); return { ...x, m: mesh, landed: false }; });
+  const arrows = m.sim.arrows.map(x => { const mesh = makeArrow(m.sim.type, archers[m.shooter].fletch); mesh.visible = false; scene.add(mesh); stuck.push(mesh); return { ...x, m: mesh, landed: false }; });
   S.play = { arrows, ft: 0, hold: 1.3, m };
   S.phase = 'fly'; S.draw = 0; preview.visible = false;
   sfx.twang(); sfx.whoosh(Math.max(...arrows.map(a => a.res.t)) * 0.8);
@@ -208,7 +253,8 @@ function endShot() {
   Object.assign(S, { hp: [...m.hp], merlons: [...m.merlons], turn: m.turn, wind: m.wind, play: null, aim: { pitch: 0.5, power: 0 } });
   if (m.winner >= 0) {
     S.phase = 'over'; S.winner = m.winner;
-    $('#winner').textContent = S.mode === 'online' ? (m.winner === S.me ? 'You win!' : 'You lose') : `${NAMES[m.winner]} wins!`;
+    $('#winner').textContent = S.mode === 'online' ? (m.winner === S.me ? 'You win!' : 'You lose') : `${nameOf(m.winner)} wins!`;
+    $('#taunt').textContent = `${nameOf(m.winner)}: “${TAUNTS[looks[m.winner].taunt]}”`; $('#taunt').style.background = css(cols[m.winner]);
     $('#overMsg').textContent = ''; $('#rematch').disabled = false; show('#over', true); sfx.fanfare();
   } else {
     S.phase = 'aim';
@@ -287,12 +333,12 @@ document.querySelectorAll('#arenas button').forEach(b => b.onclick = () => {
   if (b.dataset.a !== 'random') { setArena(b.dataset.a); S.arenaId = b.dataset.a; }
 });
 $('#hotBtn').onclick = () => { sfx.unlock(); startHot(); };
-$('#createBtn').onclick = () => { sfx.unlock(); net().emit('create', { arena: S.arenaChoice }); $('#homeMsg').textContent = 'Creating room…'; };
+$('#createBtn').onclick = () => { sfx.unlock(); net().emit('create', { arena: S.arenaChoice, look: myLook() }); $('#homeMsg').textContent = 'Creating room…'; };
 $('#joinBtn').onclick = () => {
   sfx.unlock();
   const code = $('#codeIn').value.trim().toUpperCase();
   if (code.length < 4) { $('#homeMsg').textContent = 'Enter the 4-letter code'; return; }
-  net().emit('join', { code }); $('#homeMsg').textContent = 'Joining…';
+  net().emit('join', { code, look: myLook() }); $('#homeMsg').textContent = 'Joining…';
 };
 $('#codeIn').addEventListener('keydown', e => { if (e.key === 'Enter') $('#joinBtn').click(); });
 $('#copyBtn').onclick = () => {
@@ -320,7 +366,7 @@ function net() {
   sock = window.io();
   sock.on('created', ({ code }) => { $('#code').textContent = code; show('#home', false); show('#lobby', true); });
   sock.on('joinError', msg => { $('#homeMsg').textContent = msg; });
-  sock.on('start', ({ arena: id, you, hp, merlons, turn, wind }) => startMatch({ arenaId: id, mode: 'online', me: you, hp, merlons, turn, wind }));
+  sock.on('start', ({ arena: id, you, hp, merlons, turn, wind, looks: ls }) => startMatch({ arenaId: id, mode: 'online', me: you, hp, merlons, turn, wind, looks: ls }));
   sock.on('aim', a => { if (S.mode === 'online' && S.phase === 'aim' && S.turn !== S.me) archers[S.turn].pose(a.pitch, a.draw, true, S.types[S.turn]); });
   sock.on('shot', m => { if (S.mode === 'online') playShot(m); });
   sock.on('rematchAsk', () => { $('#overMsg').textContent = 'Opponent wants a rematch!'; });
@@ -343,11 +389,12 @@ function updateHud() {
   const online = S.mode === 'online';
   archers.forEach((a, i) => {
     $(`#hp${i} i`).style.width = `${S.hp[i]}%`;
-    $(`#hp${i} .num`).textContent = S.hp[i];
+    const nm = document.createElement('span'); nm.textContent = nameOf(i);
+    $(`#hp${i} .num`).replaceChildren(nm, ` ${S.hp[i]}`); // long names get an ellipsis, HP always shows
     $(`#hp${i} .you`).classList.toggle('hidden', !(online && i === S.me));
   });
-  $('#turn').textContent = online ? (S.turn === S.me ? 'Your turn' : `${NAMES[S.turn]}'s turn`) : `${NAMES[S.turn]}'s turn`;
-  $('#turn').className = S.turn ? 'red' : 'blue';
+  $('#turn').textContent = online && S.turn === S.me ? 'Your turn' : `${nameOf(S.turn)}'s turn`;
+  $('#turn').style.background = css(cols[S.turn]);
   const along = S.wind.x * archers[S.turn].f, w = Math.abs(S.wind.x); // wind is only ever along the shot line
   $('#windNum').textContent = w < 0.05 ? 'Calm' : `${along > 0 ? 'Tail' : 'Head'} ${w.toFixed(1)}`;
   $('#windNum').style.color = w < 0.05 ? '' : along > 0 ? '#2f9a22' : '#d0251c'; // tail helps (green), head hurts (red)
@@ -414,20 +461,75 @@ function frame() {
     const o = archers[1 - viewer()], r = pipRect(), fv = archers[viewer()].f;
     pipCam.position.copy(o.root.position).add(new V(4.4 * o.f, 2.4, 0.6 * fv));
     pipCam.lookAt(o.root.position.clone().add(new V(0, 1.05, 0)));
-    $('#pip span').textContent = NAMES[1 - viewer()]; $('#pip span').style.background = viewer() ? '#2f6fe0' : '#e0342c';
+    $('#pip span').textContent = nameOf(1 - viewer()); $('#pip span').style.background = css(cols[1 - viewer()]);
     renderer.setScissorTest(true);
     renderer.setViewport(r.x, innerHeight - r.y - r.h, r.w, r.h); renderer.setScissor(r.x, innerHeight - r.y - r.h, r.w, r.h);
     effect.render(scene, pipCam);
     renderer.setScissorTest(false);
   }
+  if (!$('#custom').classList.contains('hidden')) drawPreview();
   requestAnimationFrame(frame);
 }
 setArena('field');
+const myLook = () => (localStorage.getItem('ad3t-look-0') ? loadLook(0) : null); // online sends Player 1's look (if customised)
+// ---------- customise screen: live rotating 3D preview rendered into #preview with the main renderer ----------
+const pvScene = new THREE.Scene(), pvCam = new THREE.PerspectiveCamera(30, 1, 0.1, 50);
+pvScene.background = new THREE.Color(0xcfeaff);
+pvScene.add(new THREE.HemisphereLight(0xffffff, 0x8fb86a, 1.3));
+{ const d = new THREE.DirectionalLight(0xffffff, 1.8); d.position.set(3, 5, 4); pvScene.add(d); }
+{ const g = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.12, 32), toon(0x7ccf5a)); g.position.y = -0.06; pvScene.add(g); }
+pvCam.position.set(3.9, 1.5, 0); pvCam.lookAt(0, 0.98, 0);
+let cSlot = 0, cLook = loadLook(0), pvArcher = null;
+const pickers = { helmet: HELMETS, emblem: EMBLEMS, bow: BOWS };
+function renderCustom() {
+  if (pvArcher) dispose(pvArcher.root);
+  pvArcher = makeArcher(0, cLook, hexOf(PALETTE, cLook.color), pvScene);
+  pvArcher.root.position.set(0, 0, 0); pvArcher.pose(0.25, 0.3, true);
+  document.querySelectorAll('#custom .tabs button').forEach(b => b.classList.toggle('on', +b.dataset.slot === cSlot));
+  if (document.activeElement !== $('#nameIn')) $('#nameIn').value = cLook.name;
+  document.querySelectorAll('#swColor button').forEach(b => b.classList.toggle('on', b.dataset.v === cLook.color));
+  document.querySelectorAll('#swFletch button').forEach(b => b.classList.toggle('on', b.dataset.v === cLook.fletch));
+  for (const [k, list] of Object.entries(pickers)) $(`.cyc[data-k="${k}"] span`).textContent = list.find(x => x[0] === cLook[k])[1];
+  $('.cyc[data-k="taunt"] span').textContent = `“${TAUNTS[cLook.taunt]}”`;
+}
+function setLook(patch) { cLook = sanitizeLook({ ...cLook, ...patch }, cSlot); saveLook(cSlot, cLook); renderCustom(); }
+$('#swColor').innerHTML = PALETTE.map(p => `<button data-v="${p.id}" aria-label="${p.name}" style="background:${css(p.hex)}"></button>`).join('');
+$('#swFletch').innerHTML = FLETCH.map(p => `<button data-v="${p.id}" aria-label="${p.id} fletching" style="background:${css(p.hex)}"></button>`).join('');
+$('#swColor').onclick = e => { const v = e.target.dataset.v; if (v) setLook({ color: v }); };
+$('#swFletch').onclick = e => { const v = e.target.dataset.v; if (v) setLook({ fletch: v }); };
+document.querySelectorAll('.cyc').forEach(c => c.querySelectorAll('button').forEach(b => b.onclick = () => {
+  const k = c.dataset.k, d = +b.dataset.d;
+  if (k === 'taunt') return setLook({ taunt: (cLook.taunt + d + TAUNTS.length) % TAUNTS.length });
+  const list = pickers[k], i = list.findIndex(x => x[0] === cLook[k]);
+  setLook({ [k]: list[(i + d + list.length) % list.length][0] });
+}));
+$('#nameIn').oninput = () => { const n = cleanName($('#nameIn').value, ''); cLook = sanitizeLook({ ...cLook, name: n || ['Blue', 'Red'][cSlot] }, cSlot); saveLook(cSlot, cLook); };
+$('#nameIn').onblur = () => { $('#nameIn').value = cLook.name; };
+document.querySelectorAll('#custom .tabs button').forEach(b => b.onclick = () => { cSlot = +b.dataset.slot; cLook = loadLook(cSlot); $('#nameIn').value = cLook.name; renderCustom(); });
+$('#customBtn').onclick = () => { sfx.unlock(); show('#home', false); show('#custom', true); cLook = loadLook(cSlot); $('#nameIn').value = cLook.name; renderCustom(); };
+$('#customDone').onclick = () => { show('#custom', false); show('#home', true); setLooks([loadLook(0), loadLook(1)]); };
+let pvRenderer = null, pvEffect = null; // own small canvas inside the panel (the main canvas sits behind the panel)
+function drawPreview() {
+  const box = $('#preview');
+  if (!pvRenderer) {
+    pvRenderer = new THREE.WebGLRenderer({ antialias: true }); pvRenderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+    pvEffect = new OutlineEffect(pvRenderer, { defaultThickness: 0.006, defaultColor: [0.09, 0.08, 0.13] });
+    box.appendChild(pvRenderer.domElement);
+  }
+  const w = box.clientWidth, h = box.clientHeight;
+  if (!pvArcher || w < 10) return;
+  const c = pvRenderer.domElement;
+  if (c.width !== Math.round(w * pvRenderer.getPixelRatio()) || c.height !== Math.round(h * pvRenderer.getPixelRatio())) { pvRenderer.setSize(w, h); pvCam.aspect = w / h; pvCam.updateProjectionMatrix(); }
+  pvArcher.root.rotation.y = time * 0.6;
+  pvEffect.render(pvScene, pvCam);
+}
+
 updateHud(); frame();
 
 // test hook (scripted checks)
 window.__game = {
   S, archers, camera,
+  get looks() { return looks; }, get cols() { return cols; },
   screenX: i => archers[i].root.position.clone().project(camera).x, // -1..1, left..right
   get world() { return world; },
   startHot,

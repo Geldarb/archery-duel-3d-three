@@ -29,13 +29,17 @@ const brickTex = () => canvasTex('brick', 256, 256, (g, w, h) => {
   for (let r = 0; r < 8; r++) for (let k = -1; k < 5; k++) { const l = 220 + Math.random() * 35; g.fillStyle = `rgb(${l},${l},${l})`; rrect(g, k * 64 + (r % 2) * 32 + 3, r * 32 + 3, 58, 26, 6); }
 });
 const stripeTex = () => canvasTex('stripe', 128, 16, (g, w, h) => { for (let k = 0; k < 8; k++) { g.fillStyle = k % 2 ? '#fff6ea' : '#e23b3b'; g.fillRect(k * 16, 0, 16, h); } });
-export function heraldry(i) { // Blue: gold chevron; Red: gold crown — on a gold-trimmed field
-  return canvasTex('herald' + i, 128, 128, (g, w, h) => {
-    g.fillStyle = i ? '#d8312b' : '#1f5fd6'; g.fillRect(0, 0, w, h);
-    g.fillStyle = '#f4c430'; g.fillRect(0, 0, w, 10); g.fillRect(0, h - 10, w, 10); g.fillRect(0, 0, 10, h); g.fillRect(w - 10, 0, 10, h);
-    g.strokeStyle = '#8a5a00'; g.lineWidth = 3;
-    if (i) { g.beginPath(); g.moveTo(32, 86); g.lineTo(28, 44); g.lineTo(46, 62); g.lineTo(64, 36); g.lineTo(82, 62); g.lineTo(100, 44); g.lineTo(96, 86); g.closePath(); g.fill(); g.stroke(); }
-    else for (const y of [52, 80]) { g.beginPath(); g.moveTo(26, y + 16); g.lineTo(64, y - 10); g.lineTo(102, y + 16); g.lineTo(102, y + 30); g.lineTo(64, y + 4); g.lineTo(26, y + 30); g.closePath(); g.fill(); g.stroke(); }
+export function heraldry(hex, emblem = 'plain') { // tabard texture: player colour field, gold trim and emblem (white on a gold field)
+  const field = '#' + hex.toString(16).padStart(6, '0'), goldish = hex === 0xe8b416, metal = goldish ? '#ffffff' : '#f4c430';
+  return canvasTex(`herald-${field}-${emblem}`, 128, 128, (g, w, h) => {
+    g.fillStyle = field; g.fillRect(0, 0, w, h);
+    g.fillStyle = metal; g.fillRect(0, 0, w, 10); g.fillRect(0, h - 10, w, 10); g.fillRect(0, 0, 10, h); g.fillRect(w - 10, 0, 10, h);
+    g.strokeStyle = goldish ? '#8a5a00' : '#8a5a00'; g.lineWidth = 3; g.lineJoin = 'round';
+    const poly = pts => { g.beginPath(); pts.forEach(([x, y], k) => (k ? g.lineTo(x, y) : g.moveTo(x, y))); g.closePath(); g.fill(); g.stroke(); };
+    if (emblem === 'crown') poly([[32, 86], [28, 44], [46, 62], [64, 36], [82, 62], [100, 44], [96, 86]]);
+    else if (emblem === 'chevron') for (const y of [52, 80]) poly([[26, y + 16], [64, y - 10], [102, y + 16], [102, y + 30], [64, y + 4], [26, y + 30]]);
+    else if (emblem === 'star') poly(Array.from({ length: 10 }, (_, k) => { const r = k % 2 ? 15 : 36, a = -Math.PI / 2 + k * Math.PI / 5; return [64 + r * Math.cos(a), 66 + r * Math.sin(a)]; }));
+    else if (emblem === 'cross') poly([[54, 26], [74, 26], [74, 54], [102, 54], [102, 74], [74, 74], [74, 104], [54, 104], [54, 74], [26, 74], [26, 54], [54, 54]]);
   });
 }
 
@@ -155,14 +159,15 @@ export function buildArena(scene, world, lights) {
   // ---------- toy castles behind each archer (red behind Red, blue behind Blue) with waving flags ----------
   const flags = [];
   const flagGeo = () => new THREE.PlaneGeometry(1.6, 0.9, 10, 1).translate(0.8, 0, 0);
+  const teamFlag = [toon(0x2f6fe0, { side: THREE.DoubleSide }), toon(0xe0342c, { side: THREE.DoubleSide })], teamRoof = [toon(0x2f6fe0), toon(0xe0342c)]; // recoloured per player
   function flag(parent, x, y, z, color) {
     const pole = new THREE.Group(); pole.position.set(x, y, z); parent.add(pole);
     add(new THREE.CylinderGeometry(0.06, 0.06, 2, 6), darkWood, 0, 1, 0, pole);
-    const geo = flagGeo(), cloth = add(geo, toon(color, { side: THREE.DoubleSide }), 0, 1.6, 0, pole);
+    const geo = flagGeo(), cloth = add(geo, color.isMaterial ? color : toon(color, { side: THREE.DoubleSide }), 0, 1.6, 0, pole);
     flags.push({ cloth, yaw: parent.rotation.y, base: Float32Array.from(geo.attributes.position.array) });
   }
   for (const s of [0, 1]) {
-    const sg = s ? 1 : -1, c = new THREE.Group(), roof = toon(s ? 0xe0342c : 0x2f6fe0), team = s ? 0xe0342c : 0x2f6fe0;
+    const sg = s ? 1 : -1, c = new THREE.Group(), roof = teamRoof[s], team = teamFlag[s];
     const wallM = s ? toon(0xe25b4a, { map: brickTex() }) : toon(0xdfe6f2, { map: stoneTex() });
     c.position.set(sg * 44, world.groundH(sg * 44, -sg * 9), -sg * 9); c.rotation.y = s ? -Math.PI / 2 : Math.PI / 2; c.scale.setScalar(1.25); group.add(c);
     add(new RoundedBoxGeometry(12, 6, 3, 2, 0.3), wallM, 0, 3, 0, c);
@@ -217,6 +222,7 @@ export function buildArena(scene, world, lights) {
   scene.add(group);
 
   return {
+    setTeamColors(cols) { cols.forEach((c, s) => { teamFlag[s].color.setHex(c); teamRoof[s].color.setHex(c); }); },
     setMerlon,
     resetMerlons(hp) {
       for (const d of debris) if (d.chunk) d.o.removeFromParent();

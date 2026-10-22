@@ -22,6 +22,45 @@ const st = pg => pg.evaluate(() => ({ turn: __game.S.turn, phase: __game.S.phase
 const settle = pg => pg.waitForFunction(() => ['aim', 'over', 'menu'].includes(__game.S.phase) && !__game.S.play, { timeout: 20000 });
 
 if (which !== 'online') {
+  // customisation: set both hot-seat players' looks via the UI, check they persist across reload and show in a match
+  {
+    const pg = await open(390, 844, true);
+    await pg.evaluate(() => localStorage.clear()); await pg.reload({ waitUntil: 'networkidle0' }); await pg.waitForFunction('window.__ready');
+    await pg.click('#customBtn'); await sleep(400);
+    const cyc = async (k, n) => { for (let i = 0; i < n; i++) await pg.click(`.cyc[data-k="${k}"] button[data-d="1"]`); };
+    const setName = async n => { await pg.click('#nameIn', { clickCount: 3 }); await pg.keyboard.press('Backspace'); await pg.type('#nameIn', n); };
+    await setName('Robin <b>Hood</b> of Locksley'); await pg.click('#swColor button[data-v="green"]'); await cyc('helmet', 3); await cyc('emblem', 2); await cyc('bow', 2);
+    await pg.click('#swFletch button[data-v="gold"]'); await cyc('taunt', 3); await sleep(900);
+    await pg.screenshot({ path: `${out}/custom-390-p1.png` });
+    await pg.click('#custom .tabs button[data-slot="1"]'); await sleep(200);
+    await setName('Marian'); await pg.click('#swColor button[data-v="green"]'); await cyc('helmet', 4); await cyc('bow', 1); await cyc('emblem', 3);
+    await pg.click('#swFletch button[data-v="pink"]'); await sleep(900);
+    await pg.screenshot({ path: `${out}/custom-390-p2.png` });
+    const fits = await pg.evaluate(() => { const r = document.querySelector('#custom').getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight && document.scrollingElement.scrollHeight <= innerHeight; });
+    await pg.click('#customDone'); await sleep(300);
+    await pg.reload({ waitUntil: 'networkidle0' }); await pg.waitForFunction('window.__ready'); await sleep(300);
+    const after = await pg.evaluate(() => ({ looks: __game.looks, cols: __game.cols.map(c => c.toString(16)) }));
+    console.log('custom looks after reload', JSON.stringify(after), 'fits one screen', fits);
+    assert(fits, 'customise screen fits without scrolling');
+    const [p1, p2] = after.looks;
+    assert(p1.name === 'Robin Hoo' && p1.color === 'green' && p1.helmet === 'crown' && p1.emblem === 'star' && p1.bow === 'gold' && p1.fletch === 'gold' && p1.taunt === 3, 'P1 look persisted (name sanitised)');
+    assert(p2.name === 'Marian' && p2.color === 'green' && p2.helmet === 'feather' && p2.bow === 'recurve' && p2.emblem === 'plain' && p2.fletch === 'pink', 'P2 look persisted');
+    assert(after.cols[0] !== after.cols[1], 'same colour auto-tinted');
+    await pg.click('#arenas button[data-a="field"]'); await pg.click('#hotBtn'); await sleep(1500);
+    await pg.mouse.move(195, 250); await pg.mouse.down(); await pg.mouse.move(235, 220, { steps: 5 }); await sleep(400);
+    await pg.screenshot({ path: `${out}/custom-match-390.png` });
+    await pg.mouse.move(195, 252); await pg.mouse.up(); await settle(pg); await sleep(1600);
+    await pg.screenshot({ path: `${out}/custom-match-390-p2view.png` });
+    const hud = await pg.evaluate(() => [document.querySelector('#hp0 .num').textContent, document.querySelector('#hp1 .num').textContent, document.querySelector('#turn').textContent]);
+    console.log('hot HUD', hud);
+    assert(hud[0] === 'Robin Hoo 100' && hud[1] === 'Marian 100', 'names on HP bars');
+    await pg.close();
+    const pd = await open(1280, 800, false);
+    await pd.click('#customBtn'); await sleep(900);
+    await pd.screenshot({ path: `${out}/custom-1280.png` });
+    assert(await pd.$eval('#nameIn', e => e.value) === 'Robin Hoo', 'name shown after reload');
+    await pd.close();
+  }
   for (const [w, h, touch] of [[390, 844, true], [1280, 800, false]]) {
     const pg = await open(w, h, touch);
     await pg.screenshot({ path: `${out}/${w}-menu.png` });
@@ -129,6 +168,10 @@ if (which !== 'hot') {
   // two clients in separate browser contexts
   const A = await open(390, 844, true, await b.createBrowserContext());
   const B = await open(1280, 800, false, await b.createBrowserContext());
+  for (const [P, l] of [[A, { name: 'Archie', color: 'orange', helmet: 'kettle', emblem: 'cross', bow: 'recurve', fletch: 'blue', taunt: 4 }],
+    [B, { name: 'Bella<i>!', color: 'teal', helmet: 'hood', emblem: 'star', bow: 'gold', fletch: 'pink', taunt: 5 }]]) {
+    await P.evaluate(l => localStorage.setItem('ad3t-look-0', JSON.stringify(l)), l); await P.reload({ waitUntil: 'networkidle0' }); await P.waitForFunction('window.__ready'); await sleep(300);
+  }
   await A.click('#arenas button[data-a="dusk"]');
   await A.click('#createBtn');
   await A.waitForFunction(() => /^[A-Z0-9]{4}$/.test(document.querySelector('#code').textContent), { timeout: 15000 });
@@ -144,6 +187,14 @@ if (which !== 'hot') {
   console.log('started', sa, sb);
   assert(sa.arena === 'dusk' && sb.arena === 'dusk', 'arena synced');
   assert(await A.evaluate(() => __game.S.me) === 0 && await B.evaluate(() => __game.S.me) === 1, 'seats');
+  { // each player sees the other's look and name
+    const la = await A.evaluate(() => __game.looks), lb = await B.evaluate(() => __game.looks);
+    const ha = await A.evaluate(() => document.querySelector('#hp1 .num').textContent), hb = await B.evaluate(() => document.querySelector('#hp0 .num').textContent);
+    console.log('online looks A sees', JSON.stringify(la), '| B sees', JSON.stringify(lb), '| A HUD', ha, '| B HUD', hb);
+    assert(JSON.stringify(la) === JSON.stringify(lb), 'both clients have the same looks');
+    assert(la[0].name === 'Archie' && la[0].helmet === 'kettle' && la[1].name === 'Bella' && la[1].helmet === 'hood' && la[1].color === 'teal', 'looks exchanged (and sanitised)');
+    assert(ha.startsWith('Bella') && hb.startsWith('Archie'), 'opponent names on HP bars');
+  }
   await sleep(800);
   await A.screenshot({ path: `${out}/online-A-aim.png` });
   await B.screenshot({ path: `${out}/online-B-wait.png` });

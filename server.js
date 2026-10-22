@@ -4,7 +4,7 @@ const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
 
-const BUILD = 'ad3t-v4.2';
+const BUILD = 'ad3t-v4.3';
 const app = express();
 app.get('/health', (req, res) => res.json({ ok: true, build: BUILD, rooms: rooms.size }));
 app.use('/vendor/jsm', express.static(path.join(__dirname, 'node_modules/three/examples/jsm')));
@@ -16,10 +16,10 @@ const rooms = new Map();
 const CH = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const clamp = (v, a, b) => Math.min(b, Math.max(a, Number(v) || 0));
 
-import('./public/sim.js').then(sim => {
+Promise.all([import('./public/sim.js'), import('./public/looks.js')]).then(([sim, looks]) => {
   const start = r => {
     Object.assign(r, { hp: [sim.HP, sim.HP], merlons: sim.fullMerlons(), winner: -1, wind: sim.randomWind(), votes: new Set() });
-    r.socks.forEach((s, i) => s.emit('start', { arena: r.arena, you: i, hp: r.hp, merlons: r.merlons, turn: r.turn, wind: r.wind }));
+    r.socks.forEach((s, i) => s.emit('start', { arena: r.arena, you: i, hp: r.hp, merlons: r.merlons, turn: r.turn, wind: r.wind, looks: r.looks }));
   };
   const leave = sock => {
     const r = sock.data.room;
@@ -28,21 +28,21 @@ import('./public/sim.js').then(sim => {
     for (const s of r.socks) if (s) { s.data.room = null; s.leave(r.code); if (s !== sock) s.emit('opponentLeft'); }
   };
   io.on('connection', sock => {
-    sock.on('create', ({ arena } = {}) => {
+    sock.on('create', ({ arena, look } = {}) => {
       leave(sock);
       let code;
       do code = Array.from({ length: 4 }, () => CH[Math.floor(Math.random() * CH.length)]).join(''); while (rooms.has(code));
       const id = sim.ARENA_IDS.includes(arena) ? arena : sim.ARENA_IDS[Math.floor(Math.random() * sim.ARENA_IDS.length)];
-      const r = { code, arena: id, world: sim.makeWorld(id), socks: [sock, null], turn: 0, created: Date.now() };
+      const r = { code, arena: id, world: sim.makeWorld(id), socks: [sock, null], looks: [looks.sanitizeLook(look, 0), null], turn: 0, created: Date.now() }; // looks are cosmetic, sanitised
       rooms.set(code, r); sock.data.room = r; sock.data.idx = 0; sock.join(code);
       sock.emit('created', { code, arena: id });
     });
-    sock.on('join', ({ code } = {}) => {
+    sock.on('join', ({ code, look } = {}) => {
       const r = rooms.get(String(code || '').toUpperCase().trim());
       if (!r) return sock.emit('joinError', 'Room not found');
       if (r.socks[1] || r.socks[0] === sock) return sock.emit('joinError', 'Room is full');
       leave(sock);
-      r.socks[1] = sock; sock.data.room = r; sock.data.idx = 1; sock.join(r.code);
+      r.socks[1] = sock; r.looks[1] = looks.sanitizeLook(look, 1); sock.data.room = r; sock.data.idx = 1; sock.join(r.code);
       start(r);
     });
     sock.on('aim', a => {
