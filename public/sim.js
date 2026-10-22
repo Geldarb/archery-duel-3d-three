@@ -4,7 +4,7 @@ export const DIST = 15, HP = 100, MAXV = 26, G = 9.8;
 export const WALL_H = 5, TOWER_R = 2.7, RING_IN = 2.05;   // tower height and radii of the low ring wall
 export const BREAST = 0.75, MERLON_H = 0.8;               // ring-wall height, merlon height above it
 export const MERLON_R = 2.38, MERLON_HALF = 0.36;         // merlon centre radius and half-width
-export const MERLON_ANG = [-75, -50, -25, 25, 50, 75];    // destructible merlons (degrees from the facing direction); gap in front
+export const MERLON_ANG = [-75, -50, -25, 0, 25, 50, 75]; // destructible merlons (degrees from the facing direction); 0 = in the line of fire
 export const STATIC_ANG = [-100, 100];                    // decorative, indestructible
 export const MERLON_HP = 2;                               // 1st hit cracks it, 2nd knocks it off (heavy arrows knock off at once)
 export const MERLONS = 2 * MERLON_ANG.length;
@@ -86,7 +86,10 @@ export function launch(i, aim) {
 }
 function collide(world, p, shooter, merlons) {
   for (let i = 0; i < 2; i++) if (i !== shooter) { const part = archerHit(i, p); if (part) return { kind: part, who: i }; }
-  for (let m = 0; m < MERLONS; m++) if (merlons[m] > 0 && inMerlon(merlonGeom(m), p)) return { kind: 'merlon', merlon: m };
+  for (let m = 0; m < MERLONS; m++) { // own merlons are ignored: you shoot over your own parapet
+    const g = merlonGeom(m);
+    if (g.s !== shooter && merlons[m] > 0 && inMerlon(g, p)) return { kind: 'merlon', merlon: m };
+  }
   if (world.solid(p)) return { kind: 'stone' };
   if (p.y <= world.groundH(p.x, p.z)) return { kind: 'ground' };
   if (Math.abs(p.x) > 85 || Math.abs(p.z) > 55 || p.y < -5) return { kind: 'out' };
@@ -104,11 +107,11 @@ export function simulateShot(world, shooter, aim, wind, type = 'normal', merlons
       const vy0 = v.y;
       v.x += wind.x * T.wind * DT; v.z += wind.z * T.wind * DT; v.y -= G * T.g * DT;
       p.x += v.x * DT; p.y += v.y * DT; p.z += v.z * DT; t += DT;
-      if (T.split && !a.child && vy0 > 0 && v.y <= 0) { // split into 3 at the top of the arc
+      if (T.split && !a.child && vy0 > 0 && v.y <= 0) { // split into 3 at the top of the arc: high, middle and low (vertical spread, same line)
         a.child = true;
-        for (const s of [-1, 1]) {
-          const c = Math.cos(0.12 * s), sn = Math.sin(0.12 * s);
-          queue.push({ t0: t, p: { ...p }, v: { x: v.x * c - v.z * sn, y: v.y, z: v.x * sn + v.z * c }, child: true });
+        for (const s of [1, -1]) {
+          const c = Math.cos(0.16 * s), sn = Math.sin(0.16 * s), h = Math.abs(v.x), sx = Math.sign(v.x);
+          queue.push({ t0: t, p: { ...p }, v: { x: sx * (h * c - v.y * sn), y: h * sn + v.y * c, z: v.z }, child: true });
         }
       }
       const hit = collide(world, p, shooter, merlons);

@@ -4,7 +4,7 @@ const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
 
-const BUILD = 'ad3t-v4.1';
+const BUILD = 'ad3t-v4.2';
 const app = express();
 app.get('/health', (req, res) => res.json({ ok: true, build: BUILD, rooms: rooms.size }));
 app.use('/vendor/jsm', express.static(path.join(__dirname, 'node_modules/three/examples/jsm')));
