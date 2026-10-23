@@ -557,7 +557,7 @@ function net() {
     if (S.mode === 'online' && (S.play || S.cardT > 0)) S.pending = m; else startMatch(m); // let the last shot and round card finish first
   });
   sock.on('build', m => { autoJoin = null; enterBuild({ arenaId: m.arena, mode: 'online', me: m.you, turn: m.turn, looks: m.looks, best: m.best, score: m.score, time: m.time }); });
-  sock.on('buildError', ({ err, late }) => { if (S.phase !== 'build' || late) return; BS.sent = false; buildMsg(err, true); renderBuildUi(); });
+  sock.on('buildError', ({ err, late }) => { S.lastBuildErr = err; if (S.phase !== 'build' || late) return; BS.sent = false; buildMsg(err, true); renderBuildUi(); });
   sock.on('planOk', ({ ready }) => { if (ready && S.phase === 'build') { BS.locked = true; renderBuildUi(); } });
   sock.on('oppReady', () => { BS.oppReady = true; renderBuildUi(); });
   sock.on('aim', a => { if (S.mode === 'online' && S.phase === 'aim' && S.turn !== S.me) archers[S.turn].pose(a.pitch, a.draw, true, S.types[S.turn]); });
@@ -611,7 +611,7 @@ function enterBuild(m) {
   camJump = true;
   if (hot) showPass(0); else { show('#build', true); buildMsg('Tap your tower to add a block · drag to turn'); }
   renderBuild();
-  if (window.__game.autoSkip) setTimeout(() => { if (S.phase === 'pass') $('#passSkip').click(); else if (S.phase === 'build') $('#bSkip').click(); }, 0);
+  if (window.__game.autoSkip || window.__autoSkip) setTimeout(() => { if (S.phase === 'pass') $('#passSkip').click(); else if (S.phase === 'build') $('#bSkip').click(); }, 0);
 }
 function endBuildUi() { show('#build', false); show('#pass', false); ghost.visible = false; spotRing.visible = false; buildGrid.visible = false; bdrag = null; }
 function showPass(k) { // hot-seat privacy card: the player who isn't building looks away

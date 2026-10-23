@@ -10,7 +10,7 @@ const b = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', hea
 const errors = [], sleep = ms => new Promise(r => setTimeout(r, ms)), results = [];
 const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); results.push('ok ' + m); };
 async function open(w, h, ctx = b) {
-  const pg = await ctx.newPage();
+  const pg = await ctx.newPage(); await pg.evaluateOnNewDocument(() => { window.__autoSkip = true; });
   await pg.setViewport({ width: w, height: h, isMobile: w < 900, hasTouch: w < 900, deviceScaleFactor: 1 });
   pg.on('console', m => { if (m.type() === 'error') errors.push(`${w}x${h}: ${m.text()}`); });
   pg.on('pageerror', e => errors.push(`${w}x${h}: ${e.message}`));

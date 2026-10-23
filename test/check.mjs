@@ -9,7 +9,7 @@ const errors = [];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); };
 async function open(w, h, touch, ctx = b, url = base) {
-  const pg = await ctx.newPage();
+  const pg = await ctx.newPage(); await pg.evaluateOnNewDocument(() => { window.__autoSkip = true; }); // v5.1: these suites skip the build phase
   await pg.setViewport({ width: w, height: h, isMobile: touch, hasTouch: touch, deviceScaleFactor: 1 });
   pg.on('console', m => { if (m.type() === 'error') errors.push(`${w}: ${m.text()}`); });
   pg.on('pageerror', e => errors.push(`${w}: ${e.message}`));

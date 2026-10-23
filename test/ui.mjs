@@ -50,7 +50,7 @@ const res = [];
 for (const [w, h] of SIZES) {
   const tag = `${w}x${h}`;
   const ctx = await b.createBrowserContext();
-  const pg = await ctx.newPage();
+  const pg = await ctx.newPage(); await pg.evaluateOnNewDocument(() => { window.__autoSkip = true; });
   await pg.setViewport({ width: w, height: h, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
   pg.on('console', m => { if (m.type() === 'error') errors.push(`${tag}: ${m.text()}`); });
   pg.on('pageerror', e => errors.push(`${tag}: ${e.message}`));
@@ -122,7 +122,7 @@ for (const [w, h] of SIZES) {
 }
 // PWA: manifest, service worker, installability (desktop Chrome view)
 {
-  const pg = await b.newPage(); await pg.setViewport({ width: 1280, height: 800 });
+  const pg = await b.newPage(); await pg.evaluateOnNewDocument(() => { window.__autoSkip = true; }); await pg.setViewport({ width: 1280, height: 800 });
   pg.on('pageerror', e => errors.push(`pwa: ${e.message}`));
   await pg.goto(base, { waitUntil: 'load' }); await pg.waitForFunction('window.__ready', { timeout: 20000 });
   const swr = await pg.evaluate(() => Promise.race([navigator.serviceWorker.ready.then(r => r.active && r.active.scriptURL), new Promise(r => setTimeout(() => r(null), 15000))]));
