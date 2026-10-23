@@ -4,7 +4,7 @@ const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
 
-const BUILD = 'ad3t-v5.1';
+const BUILD = 'ad3t-v5.2';
 const app = express();
 app.get('/health', (req, res) => res.json({ ok: true, build: BUILD, rooms: rooms.size }));
 const fs = require('fs');
@@ -29,11 +29,12 @@ Promise.all([import('./public/sim.js'), import('./public/looks.js'), import('./p
     r.socks.forEach((s, i) => s.emit('start', { arena: r.arena, you: i, st: r.st, turn: r.turn, wind: r.wind, looks: r.looks, best: r.best, score: r.score }));
   };
   // build phase (once per series): both players build privately; the server validates + stores each plan, reveals both at the start
+  const LEGACY = process.env.LEGACY_TOWERS === '1'; // test-only: lets the regression suites keep the classic towers
   const BUILD_SECS = Math.max(5, Number(process.env.BUILD_SECS) || sim.BUILD_TIME);
   const finishBuild = r => {
     if (r.phase !== 'build' || rooms.get(r.code) !== r) return;
     clearTimeout(r.buildTimer);
-    r.builds = [0, 1].map(i => r.res[i]); // last valid plan each (untouched tower if none)
+    r.builds = [0, 1].map(i => r.res[i]); // last valid plan each (bare ground + archer if nothing was placed)
     start(r);
   };
   const newSeries = r => {
@@ -76,6 +77,7 @@ Promise.all([import('./public/sim.js'), import('./public/looks.js'), import('./p
       if (!r || !r.socks[1]) return;
       if (r.phase !== 'build') return sock.emit('buildError', { err: 'Building is over', late: true });
       if (r.ready[i]) return sock.emit('buildError', { err: 'Already ready' });
+      if (plan && plan.classic && LEGACY) { r.res[i] = null; r.ready[i] = !!ready; const o = r.socks[1 - i]; if (ready && o) o.emit('oppReady'); sock.emit('planOk', { ready: !!ready, n: 0 }); if (r.ready[0] && r.ready[1]) finishBuild(r); return; } // regression suites only
       const v = sim.validateBuild(i, plan);
       if (!v.ok) return sock.emit('buildError', { err: v.err, at: v.at });
       r.res[i] = v;

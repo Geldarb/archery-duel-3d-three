@@ -4,7 +4,7 @@ export const DIST = 15, HP = 100, MAXV = 26, G = 9.8;
 export const WALL_H = 5, SHOULDER = 1.15;                 // tower-top floor height, bow-arm pivot height above the archer's feet
 export const TOWER_HALF = 1.6, WALL_T = 0.8, COURSE_H = 0.92, COURSES = 5, SLAB_H = 0.4, MERLON_S = 0.7;
 export const ARCHER_HALF = [0.28, 0.8, 0.28];              // archer physics box (feet at y - 0.8)
-export const BUILD_MAX = 8, CELL = 0.8, PARK_Y = -40;      // build phase: blocks per player, grid cell (= block size), parked-slot height
+export const BUILD_MAX = 30, CELL = 0.8, PARK_Y = -40;     // build phase: blocks per player, grid cell (= block size), parked-slot height
 const towerX = s => (s ? DIST : -DIST);
 // Block layout: hollow square shell (5 courses x 6 blocks), 3 floor slabs the archer stands on, 8 merlons. 41 per tower.
 export const LAYOUT = (() => {
@@ -27,52 +27,66 @@ export const LAYOUT = (() => {
 export const BLOCKS = LAYOUT.length;
 export const parked = q => q[1] < PARK_Y / 2;
 // physics snapshot: b = per block [x,y,z,qx,qy,qz,qw], a = per archer feet position [x,y,z]
-// builds[s] = validated build-phase result { blocks: [[x,y,z]...], archer: [x,y,z] } (or null = untouched tower)
+// builds[s] = validated build-phase result { blocks: [[x,y,z]...], archer: [x,y,z] }: that side's classic tower is parked and the player's
+// own tower (built from the ground up) is used instead. null = the classic 41-block tower (legacy layout, kept for the regression suites).
 export function initialPhys(builds = null) {
   const b = LAYOUT.map(l => [...l.pos, 0, 0, 0, 1]), a = [[-DIST, WALL_H, 0], [DIST, WALL_H, 0]];
   if (builds) for (const s of [0, 1]) {
     const B = builds[s]; if (!B) continue;
+    LAYOUT.forEach((l, i) => { if (l.s === s && l.kind !== 'build') b[i] = [l.pos[0], PARK_Y, l.pos[2], 0, 0, 0, 1]; });
     B.blocks.forEach((p, n) => { b[BUILD_SLOT0[s] + n] = [p[0], p[1], p[2], 0, 0, 0, 1]; });
     a[s] = [...B.archer];
   }
   return { b, a };
 }
-// ---------- build phase (once per match / series): extra blocks + a new archer spot on your own tower ----------
-// Blocks snap to a 0.8 m grid of 6x6 columns around your tower (the 4x4 footprint plus a one-cell ring) and drop onto the highest
-// surface under them. A block must rest with its centre over a stone (or the ground) and stay under the height limit. The archer
-// stands on a 0.4 m grid on top of any stone, centre fully supported. Validation is pure + deterministic (server and both clients).
-export const BUILD_GRID = 3, ARCHER_GRID = 5, BUILD_TOP = WALL_H + 2.4, BUILD_TIME = 60;
+// ---------- build phase (once per match / series): each player builds their own tower from the ground up ----------
+// Blocks snap to a 0.8 m grid: a 6x6-column zone on your own side (centred where the classic tower stood, flat ground, far from the
+// middle), up to BUILD_LEVELS high. A block sits on the ground or straight on top of another block (no floating, no overlaps). Cells are
+// [gx, gz] (dropped onto the column) or [gx, gz, level] (must be exactly the column's next level). The archer starts on the ground and
+// may stand on a 0.4 m grid on the ground or on any block top, centre fully supported. Pure + deterministic (server and both clients).
+export const BUILD_GRID = 3, ARCHER_GRID = 5, BUILD_LEVELS = 8, BUILD_TOP = BUILD_LEVELS * CELL, BUILD_TIME = 60;
 export const BUILD_SLOT0 = [0, 1].map(s => LAYOUT.findIndex(l => l.s === s && l.kind === 'build'));
 export const defaultPlan = () => ({ blocks: [], archer: [0, 0] });
+// Skip / quick play: a ready-made 30-block tower (2x2 keep, 6 high, plus a 2x1x3 front buttress), archer on the keep top (4.8 m).
+export function autoPlan(s) {
+  const blocks = [], front = s ? -2 : 1;
+  for (let y = 0; y < 6; y++) {
+    for (const gx of [-1, 0]) for (const gz of [-1, 0]) blocks.push([gx, gz, y]);
+    if (y < 3) for (const gz of [-1, 0]) blocks.push([front, gz, y]);
+  }
+  return { blocks, archer: [0, 0] };
+}
 const box = (p, h) => ({ x0: p[0] - h[0], x1: p[0] + h[0], y1: p[1] + h[1], z0: p[2] - h[2], z1: p[2] + h[2] });
+const ON = 0.015; // blocks sit 2 x 0.012 apart, so a spot on the seam between two equal tops still counts as supported
 function surface(boxes, cx, cz, hx, hz) { // highest top under a footprint, and whether the centre point rests on something at that height
   let top = 0;
   for (const b of boxes) if (b.x0 < cx + hx && b.x1 > cx - hx && b.z0 < cz + hz && b.z1 > cz - hz) top = Math.max(top, b.y1);
-  const on = top === 0 || boxes.some(b => Math.abs(b.y1 - top) < 1e-6 && cx >= b.x0 - 1e-6 && cx <= b.x1 + 1e-6 && cz >= b.z0 - 1e-6 && cz <= b.z1 + 1e-6);
+  const on = top === 0 || boxes.some(b => Math.abs(b.y1 - top) < 1e-6 && cx >= b.x0 - ON && cx <= b.x1 + ON && cz >= b.z0 - ON && cz <= b.z1 + ON);
   return { top, on };
 }
 const rd = v => Math.round(v * 1e6) / 1e6;
 const isInt = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
+export const cellPos = (s, gx, gz, level) => [rd(towerX(s) + (gx + 0.5) * CELL), rd((level + 0.5) * CELL), rd((gz + 0.5) * CELL)];
 export function validateBuild(s, plan) {
   const fail = (err, at = -1) => ({ ok: false, err, at });
   if (!plan || typeof plan !== 'object' || !Array.isArray(plan.blocks)) return fail('Bad plan');
   if (plan.blocks.length > BUILD_MAX) return fail(`Only ${BUILD_MAX} blocks`);
-  const tx = towerX(s), H = LAYOUT[BUILD_SLOT0[s]].half;
-  const boxes = LAYOUT.filter(l => l.s === s && l.kind !== 'build').map(l => box(l.pos, l.half)), out = [];
+  const H = LAYOUT[BUILD_SLOT0[s]].half, boxes = [], out = [], cols = new Map();
   for (let n = 0; n < plan.blocks.length; n++) {
     const c = plan.blocks[n];
-    if (!Array.isArray(c) || !isInt(c[0], -BUILD_GRID, BUILD_GRID - 1) || !isInt(c[1], -BUILD_GRID, BUILD_GRID - 1)) return fail('Too far from your tower', n);
-    const x = tx + (c[0] + 0.5) * CELL, z = (c[1] + 0.5) * CELL, sf = surface(boxes, x, z, H[0], H[2]);
-    const at = [rd(x), rd(sf.top + CELL / 2), rd(z)];
-    if (!sf.on) return { ...fail('Nothing to rest on there', n), pos: at };
-    if (sf.top + CELL > BUILD_TOP + 1e-6) return { ...fail('Too high', n), pos: at };
-    const p = [rd(x), rd(sf.top + CELL / 2), rd(z)]; out.push(p); boxes.push(box(p, H));
+    if (!Array.isArray(c) || c.length < 2 || c.length > 3 || !isInt(c[0], -BUILD_GRID, BUILD_GRID - 1) || !isInt(c[1], -BUILD_GRID, BUILD_GRID - 1)) return fail('Outside your build zone', n);
+    const k = c[0] + ',' + c[1], lv = cols.get(k) || 0, want = c.length === 3 ? c[2] : lv;
+    if (!Number.isInteger(want) || want < 0) return fail('Bad block', n);
+    const at = cellPos(s, c[0], c[1], Math.min(want, BUILD_LEVELS));
+    if (want > lv) return { ...fail('No floating blocks: it needs support underneath', n), pos: at };
+    if (want < lv) return { ...fail('That spot is taken', n), pos: at };
+    if (lv >= BUILD_LEVELS) return { ...fail(`Too high (max ${BUILD_LEVELS} blocks)`, n), pos: cellPos(s, c[0], c[1], lv) };
+    cols.set(k, lv + 1); out.push(at); boxes.push(box(at, H));
   }
   const a = plan.archer || [0, 0];
-  if (!Array.isArray(a) || !isInt(a[0], -ARCHER_GRID, ARCHER_GRID) || !isInt(a[1], -ARCHER_GRID, ARCHER_GRID)) return fail('Archer must stay on your tower');
-  const ax = tx + a[0] * 0.4, az = a[1] * 0.4, sf = surface(boxes, ax, az, ARCHER_HALF[0], ARCHER_HALF[2]);
-  if (!sf.on || sf.top < 0.5) return { ...fail('Archer needs solid stone underfoot'), pos: out.at(-1) };
-  if (sf.top > BUILD_TOP + 1e-6) return fail('Too high');
+  if (!Array.isArray(a) || !isInt(a[0], -ARCHER_GRID, ARCHER_GRID) || !isInt(a[1], -ARCHER_GRID, ARCHER_GRID)) return fail('Archer must stay in your build zone');
+  const ax = towerX(s) + a[0] * 0.4, az = a[1] * 0.4, sf = surface(boxes, ax, az, ARCHER_HALF[0], ARCHER_HALF[2]);
+  if (!sf.on) return { ...fail('Archer needs solid stone underfoot'), pos: out.at(-1) };
   return { ok: true, blocks: out, archer: [rd(ax), rd(sf.top), rd(az)] };
 }
 function inBlock(b, h, p, m = 0.03) { // point inside an oriented box (inverse-rotate by the quaternion)

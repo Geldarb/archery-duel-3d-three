@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { HP, ARROWS, ARENA_IDS, SHOULDER, SPECIALS, LAYOUT, BUILD_MAX, CELL, BUILD_TIME, DIST, validateBuild, defaultPlan, seriesWinnerOf, makeWorld, simulateShot, finishShot, newRound, rng, winnerOf, randomWind, launch, facing, yawOf, initialPhys, G } from './sim.js';
+import { HP, ARROWS, ARENA_IDS, SHOULDER, SPECIALS, LAYOUT, BUILD_MAX, CELL, BUILD_TIME, BUILD_LEVELS, DIST, validateBuild, defaultPlan, autoPlan, seriesWinnerOf, makeWorld, simulateShot, finishShot, newRound, rng, winnerOf, randomWind, launch, facing, yawOf, initialPhys, G } from './sim.js';
 import { PhysRun, shotEvents, STEP } from './physics.js';
 import { SPECIAL_UI, pickupModel } from './specials.js';
 import { buildArena, heraldry, toon, noOutline } from './world.js';
@@ -573,6 +573,7 @@ addEventListener('pagehide', () => { if (sock && S.mode === 'online') sock.emit(
 // The plan ({ blocks: grid cells in order, archer: grid spot }) is validated by the same pure validateBuild() the server runs.
 const BS = { side: 0, tool: 'block', plans: [defaultPlan(), defaultPlan()], hist: [[], []], res: [null, null], ghost: null, yaw: 0, online: false, ends: 0, locked: false, sent: false, oppReady: false, m: null, msg: '', err: false, secs: -1 };
 const TX = s => (s ? DIST : -DIST);
+const EMPTY = [0, 1].map(i => validateBuild(i, defaultPlan()));
 const ghostMats = { ok: noOutline(new THREE.MeshBasicMaterial({ color: 0x5ee05a, transparent: true, opacity: 0.5, depthWrite: false })), bad: noOutline(new THREE.MeshBasicMaterial({ color: 0xff4a3a, transparent: true, opacity: 0.45, depthWrite: false })) };
 const ghost = new THREE.Mesh(new THREE.BoxGeometry(CELL, CELL, CELL), ghostMats.ok);
 ghost.add(new THREE.LineSegments(new THREE.EdgesGeometry(ghost.geometry), noOutline(new THREE.LineBasicMaterial({ color: 0xffffff }))));
@@ -581,10 +582,12 @@ const spotRing = new THREE.Mesh(new THREE.RingGeometry(0.34, 0.46, 28).rotateX(-
 spotRing.visible = false; spotRing.renderOrder = 5; scene.add(spotRing);
 const buildGrid = new THREE.GridHelper(CELL * 6, 6, 0xffffff, 0xffffff); // the snap grid on the ground around your tower
 buildGrid.material.transparent = true; buildGrid.material.opacity = 0.55; buildGrid.material.depthWrite = false; buildGrid.visible = false; scene.add(buildGrid);
-function withBlock(s, plan, cell) { // add a block; if it lands where the archer stands, the archer climbs on top of it
-  let next = { blocks: [...plan.blocks, cell], archer: plan.archer }, r = validateBuild(s, next), climbed = false;
-  if (!r.ok && r.at < 0) {
-    const up = { blocks: next.blocks, archer: [2 * cell[0] + 1, 2 * cell[1] + 1] }, r2 = validateBuild(s, up);
+const colHeight = (plan, gx, gz) => plan.blocks.reduce((n, c) => n + (c[0] === gx && c[1] === gz ? 1 : 0), 0);
+function withBlock(s, plan, cell) { // add a block on top of that column; if it lands under the archer, the archer climbs on top of it
+  const c = [cell[0], cell[1], colHeight(plan, cell[0], cell[1])], before = BS.res[s] && BS.res[s].ok ? BS.res[s].archer[1] : 0;
+  let next = { blocks: [...plan.blocks, c], archer: plan.archer }, r = validateBuild(s, next), climbed = false;
+  if ((!r.ok && r.at < 0) || (r.ok && r.archer[1] > before + 1e-6)) { // the archer's spot rose (or became unstable): step onto the new block's centre
+    const up = { blocks: next.blocks, archer: [2 * c[0] + 1, 2 * c[1] + 1] }, r2 = validateBuild(s, up);
     if (r2.ok) { next = up; r = r2; climbed = true; }
   }
   return { next, r, climbed };
@@ -609,9 +612,14 @@ function enterBuild(m) {
   if (!(history.state && history.state.ad3t)) history.pushState({ ad3t: 'game' }, '');
   show('#restart', hot); $('#homeBtn').textContent = hot ? 'Main menu' : 'Leave room';
   camJump = true;
-  if (hot) showPass(0); else { show('#build', true); buildMsg('Tap your tower to add a block · drag to turn'); }
+  if (hot) showPass(0); else { show('#build', true); buildMsg(HINT); }
   renderBuild();
-  if (window.__game.autoSkip || window.__autoSkip) setTimeout(() => { if (S.phase === 'pass') $('#passSkip').click(); else if (S.phase === 'build') $('#bSkip').click(); }, 0);
+  if (window.__game.autoSkip || window.__autoSkip) setTimeout(legacySkip, 0); // regression suites: the classic towers, no building
+}
+function legacySkip() {
+  if (S.phase !== 'pass' && S.phase !== 'build') return;
+  if (!BS.online) return quickHot(S.arenaId, BS.m.turn);
+  BS.sent = true; sock.emit('plan', { plan: { classic: true }, ready: true }); renderBuild();
 }
 function endBuildUi() { show('#build', false); show('#pass', false); ghost.visible = false; spotRing.visible = false; buildGrid.visible = false; bdrag = null; }
 function showPass(k) { // hot-seat privacy card: the player who isn't building looks away
@@ -619,16 +627,21 @@ function showPass(k) { // hot-seat privacy card: the player who isn't building l
   const a = nameOf(k), b = nameOf(1 - k);
   $('#passTitle').textContent = k ? `Pass to ${a}` : 'Build phase';
   $('#passText').innerHTML = '';
-  $('#passText').append(k ? `${b} is done. ${a}: your turn to build. ${b}, no peeking!` : `${a} builds first: up to ${BUILD_MAX} blocks and a new archer spot. ${b}, look away!`);
+  $('#passText').append(k ? `${b} is done. ${a}: your turn to build. ${b}, no peeking!` : `Build your tower from the ground up: ${BUILD_MAX} blocks, ${BUILD_TIME} s each. ${a} builds first. ${b}, look away!`);
   $('#passGo').textContent = `${a}: build`;
   show('#passSkip', !k);
   openPanel('#pass');
 }
-$('#passGo').onclick = () => { show('#pass', false); S.phase = 'build'; BS.yaw = 0; camJump = true; show('#build', true); buildMsg('Tap your tower to add a block · drag to turn'); renderBuild(); };
-$('#passSkip').onclick = () => quickHot(S.arenaId, BS.m.turn); // quick play: no building for either player
+const HINT = 'Tap the grid to place · tap again to stack';
+$('#passGo').onclick = () => { // hot-seat: this player's 60 s starts now
+  show('#pass', false); S.phase = 'build'; BS.yaw = 0; BS.tool = 'block'; BS.ends = performance.now() + BUILD_TIME * 1000; BS.secs = -1; camJump = true;
+  show('#build', true); buildMsg(HINT); renderBuild();
+};
+const autoRes = s => validateBuild(s, autoPlan(s));
+$('#passSkip').onclick = () => quickHot(S.arenaId, BS.m.turn, [autoRes(0), autoRes(1)]); // quick play: both get the ready-made 30-block tower
 function buildMsg(t, err = false) { BS.msg = t; BS.err = err; const el = $('#bMsg'); el.textContent = t; el.classList.toggle('err', err); }
 function renderBuild() { // 3D: your own build (the other side stays hidden until the match starts)
-  const s = BS.side, vis = [0, 1].map(i => (i === s && S.phase === 'build' ? BS.res[i] : null)), ph = initialPhys(vis);
+  const s = BS.side, vis = [0, 1].map(i => (i === s && S.phase === 'build' ? BS.res[i] : EMPTY[i])), ph = initialPhys(vis); // the other side stays bare ground
   arena.resetBlocks(ph.b); placeArchers(ph.a);
   const g = BS.ghost;
   ghost.visible = !!(g && g.pos && S.phase === 'build');
@@ -639,10 +652,10 @@ function renderBuild() { // 3D: your own build (the other side stays hidden unti
   renderBuildUi();
 }
 function renderBuildUi() {
-  const s = BS.side, plan = BS.plans[s], left = BUILD_MAX - plan.blocks.length, lock = BS.locked || BS.sent;
+  const s = BS.side, plan = BS.plans[s], lock = BS.locked || BS.sent;
   $('#bTitle').textContent = BS.online ? 'Build your tower' : `${nameOf(s)}: build`;
   $('#bTitle').style.background = css(cols[s]);
-  $('#bCount').textContent = `▦ ${left}/${BUILD_MAX}`;
+  $('#bCount').textContent = `▦ ${plan.blocks.length}/${BUILD_MAX}`;
   $('#bUndo').disabled = lock || !BS.hist[s].length;
   $('#bConfirm').classList.toggle('hidden', !(BS.ghost && BS.ghost.ok) || lock);
   document.querySelectorAll('#bTool button').forEach(b => { b.classList.toggle('on', b.dataset.tool === BS.tool); b.disabled = lock; });
@@ -664,7 +677,9 @@ function buildTry(cell) {
   if (plan.blocks.length >= BUILD_MAX) { buildMsg('No blocks left (Undo to take one back)', true); return false; }
   const { next, r, climbed } = withBlock(s, plan, cell);
   if (!r.ok) { buildMsg(r.at < 0 ? 'That would bury your archer' : r.err, true); return false; }
-  setPlan(next, r); sfx.thunk(); buildMsg(`${climbed ? 'Archer climbed up' : 'Block placed'} · ${BUILD_MAX - next.blocks.length} left`); return true;
+  setPlan(next, r); sfx.thunk(); buildMsg(`${climbed ? 'Archer climbed up' : 'Block placed'} · ${BUILD_MAX - next.blocks.length} left · tap again to stack`);
+  if (next.blocks.length < BUILD_MAX) { const w = withBlock(s, next, cell); if (w.r.ok) { BS.ghost = { cell, ok: true, pos: w.r.blocks.at(-1) }; renderBuild(); } }
+  return true;
 }
 function buildArcherTry(spot) {
   const s = BS.side, plan = BS.plans[s];
@@ -695,7 +710,7 @@ function buildTap(x, y) {
   if (!pick) return;
   const { p, n } = pick;
   if (BS.tool === 'archer') {
-    if (n.y < 0.5 || p.y < 0.5) { buildMsg('Tap the top of a stone', true); return; }
+    if (n.y < 0.5) { buildMsg('Tap the ground or the top of a block', true); return; }
     buildArcherTry([Math.round((p.x - TX(s)) / 0.4), Math.round(p.z / 0.4)]); return;
   }
   const q = p.clone().addScaledVector(n, 0.2); // top face: the column you tapped; side face: the neighbouring column
@@ -704,16 +719,20 @@ function buildTap(x, y) {
   setGhost(cell);
 }
 function buildCam() {
-  const s = BS.side, f = s ? -1 : 1, portrait = camera.aspect < 0.9, R = portrait ? 9 : 8.6;
-  const a = Math.atan2(f * 0.85, 1) + BS.yaw, T = new V(TX(s), portrait ? 3.6 : 4.6, 0);
-  return [T.clone().add(new V(Math.sin(a) * R, portrait ? 7.5 : 5.2, Math.cos(a) * R)), T]; // high 3/4 view so the tower top (where most building happens) is visible
+  const s = BS.side, f = s ? -1 : 1, portrait = camera.aspect < 0.9, res = BS.res[s];
+  const h = res && res.ok ? Math.max(res.archer[1], ...res.blocks.map(b => b[1] + CELL / 2)) : 0; // framing follows your tower as it grows
+  const R = (portrait ? 7.6 : 7.4) + h * 0.4, a = Math.atan2(f * 0.85, 1) + BS.yaw, T = new V(TX(s), (portrait ? 0.9 : 0.6) + h * 0.55, 0);
+  return [T.clone().add(new V(Math.sin(a) * R, (portrait ? 5.4 : 3.8) + h * 0.3, Math.cos(a) * R)), T]; // high 3/4 view of your whole build zone
 }
-function buildTick() { // online timer (the server enforces it; this is just the countdown)
-  if (!BS.online) return;
+function buildTick() { // 60 s per build (hot-seat: per player; online: both at once, enforced by the server). At 0 the build locks as it is
   const secs = Math.max(0, Math.ceil((BS.ends - performance.now()) / 1000));
   if (secs === BS.secs) return;
   BS.secs = secs; $('#bTimer').textContent = `⏱ ${secs}s`; $('#bTimer').classList.toggle('low', secs <= 10);
-  if (secs === 0 && !BS.locked) { BS.locked = true; BS.ghost = null; renderBuild(); buildMsg("Time's up!"); }
+  if (secs === 0 && !BS.locked && !BS.sent) {
+    BS.ghost = null; buildMsg("Time's up!");
+    if (!BS.online) return finishHotBuild(false); // hot-seat: lock whatever was placed and move on
+    BS.locked = true; renderBuild();
+  }
 }
 $('#bUndo').onclick = () => {
   const s = BS.side;
@@ -724,13 +743,13 @@ $('#bUndo').onclick = () => {
 };
 document.querySelectorAll('#bTool button').forEach(b => b.onclick = () => {
   BS.tool = b.dataset.tool; BS.ghost = null;
-  buildMsg(BS.tool === 'archer' ? 'Tap a stone top to move your archer' : 'Tap your tower to add a block'); renderBuild();
+  buildMsg(BS.tool === 'archer' ? 'Tap the ground or a block top to move your archer' : HINT); renderBuild();
 });
 $('#bConfirm').onclick = () => { if (BS.ghost && BS.ghost.ok) buildTry(BS.ghost.cell); };
 $('#bRot').onclick = () => { BS.yaw += Math.PI / 2; };
-function finishHotBuild(skipMine) {
-  if (skipMine) BS.res[BS.side] = null;
-  if (BS.side === 0) { if (skipMine) BS.plans[0] = defaultPlan(); return showPass(1); }
+function finishHotBuild(auto) {
+  if (auto) { BS.plans[BS.side] = autoPlan(BS.side); BS.res[BS.side] = autoRes(BS.side); }
+  if (BS.side === 0) return showPass(1);
   quickHot(S.arenaId, BS.m.turn, [BS.res[0], BS.res[1]]);
 }
 $('#bReady').onclick = () => {
@@ -738,10 +757,10 @@ $('#bReady').onclick = () => {
   if (!BS.online) return finishHotBuild(false);
   BS.sent = true; BS.ghost = null; sock.emit('plan', { plan: BS.plans[BS.side], ready: true }); renderBuild();
 };
-$('#bSkip').onclick = () => { // quick play: keep the plain tower
+$('#bSkip').onclick = () => { // auto-build: the ready-made 30-block tower, locked in
   if (S.phase !== 'build' || BS.locked || BS.sent) return;
-  if (!BS.online) return finishHotBuild(true); // hot-seat: this player keeps the plain tower; the other still gets to build
-  BS.plans[BS.side] = defaultPlan(); BS.res[BS.side] = validateBuild(BS.side, BS.plans[BS.side]); BS.sent = true; BS.ghost = null;
+  if (!BS.online) return finishHotBuild(true); // hot-seat: this player gets the auto tower; the other still gets to build
+  BS.plans[BS.side] = autoPlan(BS.side); BS.res[BS.side] = validateBuild(BS.side, BS.plans[BS.side]); BS.sent = true; BS.ghost = null;
   sock.emit('plan', { plan: BS.plans[BS.side], ready: true }); renderBuild();
 };
 
@@ -977,6 +996,7 @@ window.__game = {
   buildPlace: (gx, gz) => buildTry([gx, gz]), buildArcher: (ax, az) => buildArcherTry([ax, az]), buildUndo: () => $('#bUndo').click(), buildReady: () => $('#bReady').click(),
   buildSkip: () => $('#bSkip').click(), passGo: () => $('#passGo').click(),
   cellScreen(gx, gz) { const s = BS.side, { r } = withBlock(s, BS.plans[s], [gx, gz]); const p = r.ok ? r.blocks.at(-1) : r.pos || [TX(s) + (gx + 0.5) * CELL, 5.4, (gz + 0.5) * CELL]; const q = new V(p[0], p[1] - 0.38, p[2]).project(camera); /* the surface the block would rest on */ return [(q.x + 1) / 2 * innerWidth, (1 - q.y) / 2 * innerHeight]; },
+  validate: (s, plan) => validateBuild(s, plan), autoPlan, buildPlaceRaw: plan => { const s = BS.side, r = validateBuild(s, plan); if (r.ok) setPlan(plan, r); else buildMsg(r.err, true); return r; },
   pick: (x, y) => { const k = buildPick(x, y); return k && { p: k.p.toArray(), n: k.n.toArray(), block: k.block }; },
   sendPlan: (plan, ready) => { if (sock) sock.emit('plan', { plan, ready }); },
   simulate: (aim, type = 'normal') => simulateShot(world, S.turn, aim, S.wind, type, S.st),
