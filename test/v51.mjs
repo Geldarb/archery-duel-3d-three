@@ -1,3 +1,4 @@
+// NOTE: superseded by test/v52.mjs (v5.2 removed the pre-built towers; this suite assumes v5.1 rules).
 // v5.1 checks: build phase (hot-seat pass-and-build, online private simultaneous build + server validation + timer),
 // invalid placements rejected, layouts kept across Bo3 rounds, no building after the start, archers upright & facing each other after falls.
 // Usage: node test/v51.mjs <baseUrl> <outDir> [hot|online|all] [prefix]    (server should run with BUILD_SECS=20 for the timer test)
