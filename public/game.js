@@ -159,7 +159,7 @@ const nameOf = i => looks[i].name;
 const stuck = [];
 
 // ---------- state ----------
-const S = { mode: 'menu', phase: 'menu', me: 0, turn: 0, hp: [HP, HP], st: newRound(Math.random), rand: Math.random, wind: { x: 0, z: 0 }, aim: { pitch: 0.5, power: 0 }, draw: 0,
+const S = { last: [null, null], mode: 'menu', phase: 'menu', me: 0, turn: 0, hp: [HP, HP], st: newRound(Math.random), rand: Math.random, wind: { x: 0, z: 0 }, aim: { pitch: 0.5, power: 0 }, draw: 0,
   types: ['normal', 'normal'], seriesChoice: 1, best: 1, score: [0, 0], seriesWinner: -1, pending: null, cardT: 0, arenaChoice: 'random', arenaId: 'field', play: null, queue: [], winner: -1, focus: null };
 const viewer = () => (S.mode === 'online' ? S.me : S.turn);
 const myTurn = () => S.phase === 'aim' && (S.mode === 'hot' || S.turn === S.me);
@@ -196,6 +196,7 @@ function startMatch({ arenaId, mode, me = 0, turn = 0, st = null, wind, looks: l
   S.colors = colors || (builds ? builds.map(b => (b && b.colors) || null) : null); // v5.3: per-block colours (online: from the server each round)
   arena.setBuildColors(S.colors); arena.resetBlocks(st.phys.b); placeArchers(st.phys.a); pickupKey = '-'; showPickup(st.pickup, false);
   for (const i of [0, 1]) if (ARROWS[S.types[i]].special) S.types[i] = 'normal';
+  S.last = [null, null]; camExit(true); // v5.4: the last-shot guide starts fresh every round
   Object.assign(S, { mode, me, turn, hp: [...st.hp], st, wind, arenaId, phase: 'aim', winner: -1, play: null, queue: [], focus: null, draw: 0, best, score: [...score], seriesWinner: -1, pending: null, cardT: 0 });
   show('#roundCard', false);
   archers.forEach((a, i) => a.pose(0.5, 0, true, S.types[i]));
@@ -213,8 +214,8 @@ const quickHot = (arenaId = pickArena(), turn = 0, builds = null) => startMatch(
 const startHot = (arenaId = pickArena(), turn = 0) => enterBuild({ arenaId, mode: 'hot', turn, best: S.seriesChoice }); // a new series starts with the build phase
 function goHome() {
   if (S.mode === 'online' && sock) sock.emit('leave');
-  Object.assign(S, { mode: 'menu', phase: 'menu', play: null, queue: [], pending: null, cardT: 0 }); endBuildUi();
-  ['#hud', '#menuBtn', '#fsGame', '#bottom', '#pip', '#lobby', '#over', '#menu', '#notice', '#roundCard', '#help', '#custom'].forEach(s => show(s, false));
+  Object.assign(S, { mode: 'menu', phase: 'menu', play: null, queue: [], pending: null, cardT: 0, last: [null, null] }); endBuildUi(); camExit(true);
+  ['#hud', '#menuBtn', '#fsGame', '#camBtn', '#bottom', '#pip', '#lobby', '#over', '#menu', '#notice', '#roundCard', '#help', '#custom'].forEach(s => show(s, false));
   show('#home', true); $('#homeMsg').textContent = '';
   setLooks([loadLook(0), loadLook(1)]);
 }
@@ -237,6 +238,7 @@ function fire() {
 function playShot(m) {
   if (S.play) { S.queue.push(m); return; }
   archers[m.shooter].pose(m.aim.pitch, 0, false);
+  recordLast(m);
   const arrows = m.sim.arrows.map(x => { const mesh = makeArrow(m.sim.type, archers[m.shooter].fletch); mesh.visible = false; scene.add(mesh); stuck.push(mesh); return { ...x, m: mesh, landed: false }; });
   // live rigid-body playback from the same snapshot + impulses the server uses; the server's settled state is snapped in at the end
   const run = new PhysRun(S.st.phys, shotEvents(m.sim));
@@ -383,6 +385,107 @@ function updatePreview() {
   attr.needsUpdate = true; preview.geometry.computeBoundingSphere(); preview.visible = true;
 }
 
+// ---------- v5.4: last-shot guide. Each player sees their own previous shot while aiming: a dashed ghost arc from the bow in their colour,
+// a faded X where that arrow landed, a 'Last: 34° · 72%' label and ticks on the drag readout. Cleared every round.
+function recordLast(m) {
+  const a0 = m.sim.arrows && m.sim.arrows[0], p = a0 && a0.res && a0.res.pos;
+  const land = p && p.every(Number.isFinite) && Math.abs(p[0]) < 70 && Math.abs(p[2]) < 70 && p[1] > -5 ? [...p] : null;
+  S.last[m.shooter] = { pitch: m.aim.pitch, power: m.aim.power, type: m.sim.type, kind: a0 ? a0.res.kind : null, land };
+}
+const lastText = L => `Last: ${Math.round(L.pitch / DEG)}° · ${Math.round(L.power * 100)}%`;
+const GHOST_N = 30;
+const ghostLine = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(GHOST_N * 3), 3)),
+  noOutline(new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 0.32, gapSize: 0.22, transparent: true, opacity: 0.7, depthWrite: false })));
+ghostLine.visible = false; ghostLine.frustumCulled = false; ghostLine.renderOrder = 3; scene.add(ghostLine);
+function xTex() {
+  const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d');
+  g.lineCap = 'round'; g.beginPath(); g.moveTo(14, 14); g.lineTo(50, 50); g.moveTo(50, 14); g.lineTo(14, 50);
+  g.strokeStyle = '#1b1830'; g.lineWidth = 15; g.stroke(); g.strokeStyle = '#fff'; g.lineWidth = 8; g.stroke();
+  return new THREE.CanvasTexture(c);
+}
+const landMark = new THREE.Sprite(noOutline(new THREE.SpriteMaterial({ map: xTex(), transparent: true, opacity: 0.6, depthTest: false, depthWrite: false })));
+landMark.scale.setScalar(0.85); landMark.visible = false; landMark.renderOrder = 4; scene.add(landMark);
+let guideKey = '';
+const guideOn = () => { const L = S.last[S.turn]; return !!L && S.phase === 'aim' && myTurn() && !S.play; };
+function updateGuide() {
+  const on = guideOn(), L = on ? S.last[S.turn] : null;
+  ghostLine.visible = on; landMark.visible = on && !!L.land;
+  const lab = $('#lastShot'), txt = on ? lastText(L) : '';
+  if (lab.textContent !== txt) lab.textContent = txt;
+  lab.classList.toggle('hidden', !on || CAM.on || !!drag);
+  if (!on) { guideKey = ''; return; }
+  const ap = S.st.phys.a[S.turn], op = S.st.phys.a[1 - S.turn], type = S.types[S.turn];
+  const key = [S.turn, L.pitch, L.power, type, ...ap, ...op, cols[S.turn]].join('|');
+  if (key === guideKey) return;
+  guideKey = key;
+  const { pos, vel } = launch(S.turn, L, ap, op), attr = ghostLine.geometry.attributes.position, g = G * ARROWS[type].g, dt = 1 / 30; // no wind: same rule as the live preview, so the two line up when the aim matches
+  let n = 0;
+  for (; n < GHOST_N; n++) {
+    attr.setXYZ(n, pos.x, pos.y, pos.z);
+    if (n > 2 && pos.y < world.groundH(pos.x, pos.z)) { n++; break; }
+    vel.y -= g * dt; pos.x += vel.x * dt; pos.y += vel.y * dt; pos.z += vel.z * dt;
+  }
+  attr.needsUpdate = true; ghostLine.geometry.setDrawRange(0, n); ghostLine.geometry.computeBoundingSphere(); ghostLine.computeLineDistances();
+  ghostLine.material.color.setHex(cols[S.turn]); landMark.material.color.setHex(cols[S.turn]).lerp(new THREE.Color(0xffffff), 0.35);
+  if (L.land) landMark.position.set(L.land[0], L.land[1] + 0.35, L.land[2]);
+}
+function gauge(cur, last) { // readout bar with a tick at your last shot (turns green when you're on it)
+  return `<span class="g${Math.round(cur) === Math.round(last) ? ' eq' : ''}"><s style="width:${cur.toFixed(1)}%"></s><u style="left:${last.toFixed(1)}%"></u></span>`;
+}
+const powPct = p => (p - POW_MIN) / (1 - POW_MIN) * 100, angPct = d => (d - PITCH_MIN) / (PITCH_MAX - PITCH_MIN) * 100;
+
+// ---------- v5.4: camera mode (🎥). Swipes aim, so looking around is a mode: drag orbits, pinch / wheel zooms, presets Me / Side / Enemy.
+// Only while aiming on your turn or watching the opponent aim; any shot (or the round ending) hands the camera back to the cinematics.
+const CAM = { on: false, yaw: 0, pitch: 0.3, dist: 10, T: new V(), preset: 'me' }, CAM_MIN = 2.5, CAM_MAX = 48, P_MIN = -0.12, P_MAX = 1.35;
+const ptrs = new Map(); let pinch0 = 0;
+const camAllowed = () => (S.phase === 'aim' || S.phase === 'wait') && !S.play && S.mode !== 'menu';
+function camFrom(pos, look) {
+  const d = pos.clone().sub(look); CAM.T.copy(look); CAM.dist = d.length(); CAM.yaw = Math.atan2(d.x, d.z); CAM.pitch = Math.asin(clamp(d.y / CAM.dist, -1, 1));
+}
+function camPreset(name) {
+  const v = viewer(), fv = archers[v].f, en = archers[1 - v].root.position;
+  if (name === 'side') { // the whole battlefield from the side, your archer on the left
+    const hf = 2 * Math.atan(Math.tan(camera.fov * DEG / 2) * camera.aspect);
+    CAM.T.set(0, 3.2, 0); CAM.dist = clamp((DIST + 6) / Math.tan(hf / 2), 14, CAM_MAX); CAM.yaw = fv > 0 ? 0 : Math.PI; CAM.pitch = 0.2;
+  } else if (name === 'enemy') { // close on the enemy tower, from your side
+    CAM.T.set(en.x, Math.max(1.6, en.y * 0.6 + 0.9), en.z); CAM.dist = camera.aspect < 0.9 ? 12 : 9.5; CAM.yaw = Math.atan2(-fv * 0.8, fv * 0.6); CAM.pitch = 0.32;
+  } else { // behind my archer (the normal aim view), pivoting near the archer
+    name = 'me'; const [cp, cl] = aimCam(), dir = cl.clone().sub(cp).normalize();
+    camFrom(cp, cp.clone().addScaledVector(dir, 6));
+  }
+  CAM.preset = name; camClamp(); camBar();
+}
+function camClamp() { CAM.pitch = clamp(CAM.pitch, P_MIN, P_MAX); CAM.dist = clamp(CAM.dist, CAM_MIN, CAM_MAX); }
+const _bb = new THREE.Box3();
+function blockAt(p, pad = 0.45) { // a live tower block the point is inside (or too close to)
+  for (const m of arena.blocks) {
+    if (!m.visible || m.position.y < -20 || Math.abs(m.position.x - p.x) > 2.5 || Math.abs(m.position.z - p.z) > 2.5 || Math.abs(m.position.y - p.y) > 2.5) continue;
+    if (_bb.setFromObject(m).expandByScalar(pad).containsPoint(p)) return _bb.clone();
+  }
+  return null;
+}
+function camPose() {
+  camClamp();
+  const c = Math.cos(CAM.pitch), p = CAM.T.clone().add(new V(Math.sin(CAM.yaw) * c, Math.sin(CAM.pitch), Math.cos(CAM.yaw) * c).multiplyScalar(CAM.dist));
+  p.x = clamp(p.x, -60, 60); p.z = clamp(p.z, -60, 60);
+  const gy = world.groundH(p.x, p.z) + 0.8; if (p.y < gy) p.y = gy; // never under the ground
+  for (let k = 0, b; k < 60 && (b = blockAt(p)); k++) p.y = b.max.y + 0.05; // never inside a tower: rise over it
+  return [p, CAM.T.clone()];
+}
+function camBar() {
+  show('#camBar', CAM.on); $('#camBtn').classList.toggle('on', CAM.on);
+  document.querySelectorAll('#camBar [data-p]').forEach(b => b.classList.toggle('on', b.dataset.p === CAM.preset));
+}
+function camEnter() {
+  if (!camAllowed() || CAM.on) return;
+  drag = null; show('#aimTip', false); if (myTurn()) { S.draw = 0; preview.visible = false; archers[S.turn].pose(S.aim.pitch, 0, true, S.types[S.turn]); }
+  CAM.on = true; ptrs.clear(); camPreset('me'); camBar(); updateHud();
+}
+function camExit(snap = true) { // back to the aim view (snaps to the default)
+  if (!CAM.on) return;
+  CAM.on = false; ptrs.clear(); if (snap) camJump = true; camBar(); updateHud();
+}
+
 // ---------- input (screen space, same for both players): drag UP/DOWN = higher/lower angle, RIGHT/LEFT = more/less power ----------
 let drag = null, bdrag = null, lastCreak = 0, lastAimSend = 0;
 const canvas = renderer.domElement;
@@ -395,11 +498,27 @@ function dragAim(dx, dy, from) { // dx/dy = pointer movement in px (screen y gro
 }
 canvas.addEventListener('pointerdown', e => {
   sfx.unlock();
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); pinch0 = 0;
+  if (CAM.on) { canvas.setPointerCapture(e.pointerId); return; } // camera mode: gestures look around, never aim
   if (S.phase === 'build') { bdrag = { x: e.clientX, y: e.clientY, yaw: BS.yaw, moved: false }; canvas.setPointerCapture(e.pointerId); return; }
   if (!myTurn()) return;
   drag = { x: e.clientX, y: e.clientY, from: { ...lastAim[S.turn] }, moved: false }; canvas.setPointerCapture(e.pointerId);
 });
+function pinchStep() { // ratio of finger spread since the last move (>1 = fingers apart = zoom in)
+  const [a, b] = [...ptrs.values()], d = Math.hypot(a.x - b.x, a.y - b.y), r = pinch0 ? d / pinch0 : 1;
+  pinch0 = d; return r;
+}
 canvas.addEventListener('pointermove', e => {
+  const pt = ptrs.get(e.pointerId), px = pt ? pt.x : e.clientX, py = pt ? pt.y : e.clientY;
+  if (pt) { pt.x = e.clientX; pt.y = e.clientY; }
+  if (CAM.on) {
+    if (!pt) return;
+    if (ptrs.size >= 2) CAM.dist /= pinchStep();
+    else { CAM.yaw -= (e.clientX - px) / innerWidth * 3.4; CAM.pitch += (e.clientY - py) / innerHeight * 2.4; }
+    camClamp(); if (CAM.preset !== 'free') { CAM.preset = 'free'; camBar(); }
+    return;
+  }
+  if (S.phase === 'build' && ptrs.size >= 2) { BS.zoom = clamp(BS.zoom / pinchStep(), 0.6, 1.7); if (bdrag) bdrag.moved = true; return; } // build: pinch zooms
   if (bdrag && S.phase === 'build') { // drag = orbit the camera around your tower
     const dx = e.clientX - bdrag.x;
     if (bdrag.moved || Math.hypot(dx, e.clientY - bdrag.y) > DEAD) { bdrag.moved = true; BS.yaw = bdrag.yaw - dx / innerWidth * 3.2; }
@@ -416,13 +535,17 @@ canvas.addEventListener('pointermove', e => {
   if (Math.abs(t - lastCreak) > 0.08) { sfx.creak(t); lastCreak = t; }
   $('#hint').textContent = '';
   const tip = $('#aimTip'); // readout next to the finger
-  tip.innerHTML = `<b>${Math.round(a.power * 100)}%</b> · <i>${Math.round(a.pitch)}°</i>`;
+  const L = S.last[S.turn];
+  tip.innerHTML = `<b>${Math.round(a.power * 100)}%</b> · <i>${Math.round(a.pitch)}°</i>` + (L ? `<span class="gz">${gauge(powPct(a.power), powPct(L.power))}${gauge(angPct(a.pitch), angPct(L.pitch / DEG))}</span>` : '');
   Object.assign(tip.style, { left: `${clamp(e.clientX, 50, innerWidth - 50)}px`, top: `${Math.max(e.clientY - 34, 70)}px` });
   show('#aimTip', true);
   updatePreview();
   if (S.mode === 'online' && performance.now() - lastAimSend > 100) { lastAimSend = performance.now(); sock.emit('aim', { pitch: S.aim.pitch, draw: t }); }
 });
 const endDrag = e => {
+  if (e) ptrs.delete(e.pointerId); pinch0 = 0;
+  if (CAM.on) return;
+  if (bdrag && ptrs.size) return; // still pinching
   if (bdrag) { const b = bdrag; bdrag = null; if (!b.moved && S.phase === 'build' && e && e.type === 'pointerup') buildTap(e.clientX, e.clientY); return; }
   if (!drag) return;
   const moved = drag.moved;
@@ -432,6 +555,13 @@ const endDrag = e => {
 };
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
+canvas.addEventListener('wheel', e => { // desktop zoom: camera mode, or the build view
+  if (CAM.on) { e.preventDefault(); CAM.dist *= Math.exp(clamp(e.deltaY, -200, 200) * 0.0012); camClamp(); if (CAM.preset !== 'free') { CAM.preset = 'free'; camBar(); } }
+  else if (S.phase === 'build') { e.preventDefault(); BS.zoom = clamp(BS.zoom * Math.exp(clamp(e.deltaY, -200, 200) * 0.001), 0.6, 1.7); }
+}, { passive: false });
+$('#camBtn').onclick = () => { sfx.unlock(); if (CAM.on) camExit(true); else camEnter(); };
+$('#camDone').onclick = () => camExit(true);
+document.querySelectorAll('#camBar [data-p]').forEach(b => b.onclick = () => { if (CAM.on) camPreset(b.dataset.p); });
 
 // ---------- UI wiring ----------
 for (const k of SPECIALS) { // extra ammo slots for earned specials (shown only while you hold one)
@@ -440,6 +570,7 @@ for (const k of SPECIALS) { // extra ammo slots for earned specials (shown only 
 }
 document.querySelectorAll('#types button').forEach(b => b.onclick = () => {
   if (!myTurn()) return;
+  camExit(true); // picking an arrow = back to aiming
   S.types[S.turn] = b.dataset.t; archers[S.turn].pose(S.aim.pitch, 0, true, b.dataset.t); updateHud();
 });
 document.querySelectorAll('#arenas button').forEach(b => b.onclick = () => {
@@ -604,8 +735,8 @@ function enterBuild(m) {
   const st = newRound(Math.random), hot = m.mode === 'hot';
   Object.assign(S, { mode: m.mode, me: m.me || 0, turn: m.turn || 0, hp: [...st.hp], st, wind: { x: 0, z: 0 }, arenaId: m.arenaId, phase: hot ? 'pass' : 'build', winner: -1, play: null, queue: [], focus: null, draw: 0,
     best: m.best || 1, score: [...(m.score || [0, 0])], seriesWinner: -1, pending: null, cardT: 0, builds: null });
-  pickupKey = '-'; showPickup(null, false);
-  Object.assign(BS, { side: hot ? 0 : S.me, tool: 'block', plans: [defaultPlan(), defaultPlan()], hist: [[], []], ghost: null, yaw: 0, online: !hot, ends: performance.now() + (m.time || BUILD_TIME) * 1000,
+  pickupKey = '-'; showPickup(null, false); S.last = [null, null]; camExit(true);
+  Object.assign(BS, { zoom: 1, side: hot ? 0 : S.me, tool: 'block', plans: [defaultPlan(), defaultPlan()], hist: [[], []], ghost: null, yaw: 0, online: !hot, ends: performance.now() + (m.time || BUILD_TIME) * 1000,
     locked: false, sent: false, oppReady: false, m, msg: '', err: false, secs: -1, color: towerColor(hot ? 0 : S.me) });
   BS.res = [0, 1].map(i => validateBuild(i, BS.plans[i]));
   archers.forEach((a, i) => a.pose(0.5, 0, true, 'normal'));
@@ -725,8 +856,8 @@ function buildTap(x, y) {
 function buildCam() {
   const s = BS.side, f = s ? -1 : 1, portrait = camera.aspect < 0.9, res = BS.res[s];
   const h = res && res.ok ? Math.max(res.archer[1], ...res.blocks.map(b => b[1] + CELL / 2)) : 0; // framing follows your tower as it grows
-  const R = (portrait ? 7.6 : 7.4) + h * 0.4, a = Math.atan2(f * 0.85, 1) + BS.yaw, T = new V(TX(s), (portrait ? 0.9 : 0.6) + h * 0.55, 0);
-  return [T.clone().add(new V(Math.sin(a) * R, (portrait ? 5.4 : 3.8) + h * 0.3, Math.cos(a) * R)), T]; // high 3/4 view of your whole build zone
+  const z = BS.zoom || 1, R = ((portrait ? 7.6 : 7.4) + h * 0.4) * z, a = Math.atan2(f * 0.85, 1) + BS.yaw, T = new V(TX(s), (portrait ? 0.9 : 0.6) + h * 0.55, 0);
+  return [T.clone().add(new V(Math.sin(a) * R, ((portrait ? 5.4 : 3.8) + h * 0.3) * z, Math.cos(a) * R)), T]; // high 3/4 view of your whole build zone
 }
 function buildTick() { // 60 s per build (hot-seat: per player; online: both at once, enforced by the server). At 0 the build locks as it is
   const secs = Math.max(0, Math.ceil((BS.ends - performance.now()) / 1000));
@@ -809,7 +940,7 @@ function updateHud() {
     b.classList.toggle('hidden', n <= 0); b.querySelector('em').textContent = `×${n}`; specials += n > 0;
   });
   $('#types').classList.toggle('many', specials > 0);
-  $('#hint').textContent = S.phase === 'aim' && S.draw === 0 ? (mine ? 'Drag ↑↓ angle · ←→ power · release to shoot' : 'Opponent is aiming…') : '';
+  $('#hint').textContent = CAM.on ? 'Drag to look around · pinch or wheel to zoom' : S.phase === 'aim' && S.draw === 0 ? (mine ? 'Drag ↑↓ angle · ←→ power · release to shoot' : 'Opponent is aiming…') : '';
   $('#muteBtn').textContent = `Sound: ${sfx.isMuted() ? 'off' : 'on'}`;
 }
 
@@ -830,6 +961,11 @@ function camTarget(t) {
     }
     return [focus.clone().add(new V(-3 * fs, 2.2, 5.5 * fv)), focus.clone().add(new V(1.5 * fs, 0, 0))];
   }
+  if (CAM.on) return camPose();
+  return aimCam();
+}
+function aimCam() {
+  const v = viewer(), fv = archers[v].f;
   const a = archers[v].root.position, portrait = camera.aspect < 0.9; // close over-the-shoulder view, archer big in the lower left
   const [cp, cl] = portrait ? [a.clone().add(new V(-3.45 * fv, 2.95, 1.5 * fv)), a.clone().add(new V(10 * fv, 0.06, -1.85 * fv))]
                             : [a.clone().add(new V(-5.1 * fv, 2.9, 2.3 * fv)), a.clone().add(new V(10 * fv, 0.78, -0.9 * fv))];
@@ -847,7 +983,7 @@ function fadeTo(mt, want, dt) {
   if (mt.transparent !== tr) { mt.transparent = tr; mt.depthWrite = !tr; mt.needsUpdate = true; }
 }
 function fadeOccluders(dt) { // stones between the camera and your archer (e.g. after a fall), and trees in front of the action, turn see-through
-  const on = S.phase === 'aim' || S.phase === 'wait';
+  const on = (S.phase === 'aim' || S.phase === 'wait') && !CAM.on;
   _ab.subVectors(camLook, camera.position); const LL = _ab.lengthSq();
   for (const t of arena.fadeTrees || []) {
     const k = _ap.subVectors(t.c, camera.position).dot(_ab) / LL;
@@ -894,6 +1030,9 @@ function frame() {
   if (S.pending && !S.play && S.cardT <= 0) { const p = S.pending; S.pending = null; startMatch(p); }
   if (flashT > 0 && (flashT -= dt) <= 0 && !drag) $('#readout').textContent = '';
   arena.update(dt, time, S.phase === 'menu' ? { x: 1.5, z: 0.5 } : S.wind, camera.position, sfx);
+  if (CAM.on && !camAllowed()) camExit(false); // a shot / round end: the cinematics take over
+  show('#camBtn', camAllowed() && !$('#hud').classList.contains('hidden'));
+  if (S.phase !== 'menu' && world) updateGuide();
   const [tp, tl] = camTarget(time), k = camJump ? 1 : 1 - Math.exp(-dt * (S.phase === 'fly' ? 10 : 4.5));
   camPos.lerp(tp, k); camLook.lerp(tl, k); camJump = false;
   camera.position.copy(camPos); camera.lookAt(camLook);
@@ -907,7 +1046,7 @@ function frame() {
   }
   renderer.setViewport(0, 0, innerWidth, innerHeight);
   effect.render(scene, camera);
-  let pip = S.phase === 'aim' || S.phase === 'wait';
+  let pip = (S.phase === 'aim' || S.phase === 'wait') && !CAM.on;
   if (pip && pickupObj) { // never let the opponent inset cover the power-up
     const q = pickupObj.position.clone().project(camera), r = pipRect(), x = (q.x + 1) / 2 * innerWidth, y = (1 - q.y) / 2 * innerHeight;
     if (q.z < 1 && x > r.x - 40 && x < r.x + r.w + 40 && y > r.y - 50 && y < r.y + r.h + 40) pip = false;
@@ -1000,6 +1139,18 @@ updateHud(); frame();
 // test hook (scripted checks)
 window.__game = {
   S, archers, camera,
+  // v5.4 hooks: last-shot guide + camera mode
+  guide: () => {
+    const at = ghostLine.geometry.attributes.position, n = ghostLine.geometry.drawRange.count;
+    return { last: clone(S.last), ghost: ghostLine.visible, ghostN: Math.min(n, GHOST_N), ghost0: [at.getX(0), at.getY(0), at.getZ(0)], ghostCol: ghostLine.material.color.getHex(), dashed: ghostLine.material.isLineDashedMaterial,
+      mark: landMark.visible ? landMark.position.toArray() : null, label: $('#lastShot').textContent, labelVis: !$('#lastShot').classList.contains('hidden'), tip: $('#aimTip').innerHTML };
+  },
+  lastText,
+  cam: () => ({ on: CAM.on, preset: CAM.preset, yaw: CAM.yaw, pitch: CAM.pitch, dist: CAM.dist, T: CAM.T.toArray(), pos: camera.position.toArray(), look: camLook.toArray(), want: CAM.on ? camPose()[0].toArray() : null,
+    allowed: camAllowed(), ground: world.groundH(camera.position.x, camera.position.z), inBlock: !!blockAt(camera.position, 0), min: CAM_MIN, max: CAM_MAX, pmin: P_MIN, pmax: P_MAX, buildZoom: BS.zoom }),
+  camEnter, camExit, camPreset, camSet: o => { Object.assign(CAM, o); if (o.T) CAM.T = new V(...o.T); CAM.preset = 'free'; },
+  camPoseOf: o => { const keep = { ...CAM, T: CAM.T.clone() }; Object.assign(CAM, o); if (o.T) CAM.T = new V(...o.T); const r = camPose()[0]; Object.assign(CAM, keep); return { pos: r.toArray(), ground: world.groundH(r.x, r.z), inBlock: !!blockAt(r, 0) }; },
+  aimCam: () => aimCam().map(v => v.toArray()),
   get looks() { return looks; }, get cols() { return cols; },
   screenX: i => archers[i].root.position.clone().project(camera).x, // -1..1, left..right
   get world() { return world; },

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="build" content="ad3t-v5.3">
+<meta name="build" content="ad3t-v5.4">
 <meta name="color-scheme" content="only light">
 <meta name="theme-color" content="#2f6fe0">
 <meta name="mobile-web-app-capable" content="yes">
@@ -27,10 +27,13 @@
 </div>
 <button id="menuBtn" class="hidden" aria-label="Menu">☰</button>
 <button id="fsGame" class="fsBtn icon hidden" aria-label="Full screen"><svg class="fsIn" viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg><svg class="fsOut" viewBox="0 0 24 24"><path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/></svg></button>
+<button id="camBtn" class="hidden" aria-label="Camera">🎥</button>
 <div id="pip" class="hidden"><span></span></div>
 <div id="roundCard" class="hidden"><b></b><span></span></div>
 <div id="bottom" class="hidden">
+  <div id="lastShot" class="hidden"></div>
   <div id="hint"></div>
+  <div id="camBar" class="hidden"><button data-p="me">Me</button><button data-p="side">Side</button><button data-p="enemy">Enemy</button><button id="camDone">Done</button></div>
   <div id="readout"></div>
   <div id="aimTip" class="hidden"></div>
   <div id="types">
@@ -69,7 +72,7 @@
     <div id="homeMsg" class="msg"></div>
     <button id="installBtn" class="hidden"><svg viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M5 20h14"/></svg>Install app</button>
     <div id="installTip" class="tip hidden"></div>
-    <div class="build">ad3t-v5.3</div>
+    <div class="build">ad3t-v5.4</div>
   </div>
   <footer class="pf"><button id="hotBtn">Hot-seat</button><button id="createBtn">Create room</button></footer>
 </div>
