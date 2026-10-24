@@ -86,7 +86,7 @@ if (which !== 'online') {
   await pg.evaluate(a => __game.shootAim(a), aimR1); await settle(pg); await sleep(500);
   g = await G(pg);
   const cols = await pg.evaluate(() => __game.cols);
-  assert(g.ghost && g.dashed && g.ghostN >= 6 && g.ghostCol === cols[0], `hot: Blue's turn: dashed ghost arc in Blue's colour (${g.ghostN} pts)`);
+  assert(g.ghost && g.dashed && g.ghostN >= 6 && g.ghostCol === 0xffffff, `hot: Blue's turn: dashed ghost arc in Blue's colour (${g.ghostN} pts)`);
   assert(g.labelVis && g.label === label(aimB1), `hot: label "${g.label}" matches Blue's last shot`);
   const bow = await pg.evaluate(() => { const L = __game.S.last[0]; const ap = __game.S.st.phys.a[0]; return [ap[0], ap[1], ap[2]]; });
   assert(Math.hypot(g.ghost0[0] - bow[0], g.ghost0[2] - bow[2]) < 1.2 && g.ghost0[1] > bow[1] + 0.8 && g.ghost0[1] < bow[1] + 2.5, 'hot: ghost arc starts at Blue\'s bow');
@@ -107,7 +107,7 @@ if (which !== 'online') {
   await settle(pg); await sleep(300);
   // Red's turn: Red's own guide, not Blue's
   g = await G(pg);
-  assert(g.ghost && g.label === label(aimR1) && g.ghostCol === cols[1], `hot: Red sees their own last shot "${g.label}" in Red's colour`);
+  assert(g.ghost && g.label === label(aimR1) && g.ghostCol === 0xffffff, `hot: Red sees their own last shot "${g.label}" in Red's colour`);
   // special (bomb) still records angle/power
   await pg.evaluate(() => __game.giveAmmo('bomb', 1, 1));
   const aimR2 = { pitch: 52 * DEG, power: 0.38 };
@@ -273,7 +273,7 @@ if (which !== 'hot') {
   [P, Q] = await who();
   gp = await G(P); gq = await G(Q);
   const colsP = await P.evaluate(() => __game.cols[__game.S.me]);
-  assert(gp.ghost && gp.labelVis && gp.label === label(a1) && gp.ghostCol === colsP && gp.mark, `online: first shooter's turn again, their own guide "${gp.label}" + landing X in their colour`);
+  assert(gp.ghost && gp.labelVis && gp.label === label(a1) && gp.ghostCol === 0xffffff && gp.mark, `online: first shooter's turn again, their own guide "${gp.label}" + landing X in their colour`);
   assert(!gq.ghost && !gq.labelVis, 'online: the opponent\'s screen does not show it');
   await shot(P, `online-guide-${P === A ? 'A-360x640' : 'B-740x360'}`);
   await P.evaluate(() => __game.shootAim({ pitch: 0.436, power: 0.35 })); await P.waitForFunction(() => !!__game.S.play, { timeout: 10000, polling: 50 }); await both(); await sleep(500);

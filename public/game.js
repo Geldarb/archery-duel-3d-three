@@ -214,7 +214,7 @@ const quickHot = (arenaId = pickArena(), turn = 0, builds = null) => startMatch(
 const startHot = (arenaId = pickArena(), turn = 0) => enterBuild({ arenaId, mode: 'hot', turn, best: S.seriesChoice }); // a new series starts with the build phase
 function goHome() {
   if (S.mode === 'online' && sock) sock.emit('leave');
-  Object.assign(S, { mode: 'menu', phase: 'menu', play: null, queue: [], pending: null, cardT: 0, last: [null, null] }); endBuildUi(); camExit(true);
+  Object.assign(S, { mode: 'menu', phase: 'menu', play: null, queue: [], pending: null, cardT: 0, last: [null, null] }); endBuildUi(); camExit(true); resetViews();
   ['#hud', '#menuBtn', '#fsGame', '#camBtn', '#bottom', '#pip', '#lobby', '#over', '#menu', '#notice', '#roundCard', '#help', '#custom'].forEach(s => show(s, false));
   show('#home', true); $('#homeMsg').textContent = '';
   setLooks([loadLook(0), loadLook(1)]);
@@ -395,21 +395,41 @@ function recordLast(m) {
 const lastText = L => `Last: ${Math.round(L.pitch / DEG)}° · ${Math.round(L.power * 100)}%`;
 const GHOST_N = 30;
 const ghostLine = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(GHOST_N * 3), 3)),
-  noOutline(new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 0.32, gapSize: 0.22, transparent: true, opacity: 0.7, depthWrite: false })));
-ghostLine.visible = false; ghostLine.frustumCulled = false; ghostLine.renderOrder = 3; scene.add(ghostLine);
+  noOutline(new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 0.45, gapSize: 0.3, transparent: true, opacity: 0.95, depthTest: false, depthWrite: false })));
+ghostLine.visible = false; ghostLine.frustumCulled = false; ghostLine.renderOrder = 20; scene.add(ghostLine);
+// v5.5: the last-shot arc is thick white dashes with a light-blue glow, drawn on top of everything (shows through rubble)
+const GLOW = 0x8fd8ff, DASH_MAX = 140, DASH = 0.5, GAP = 0.32, _dm = new THREE.Matrix4(), _dq = new THREE.Quaternion(), _up = new V(0, 1, 0);
+const dashMesh = (r, color, opacity, order) => { const m = new THREE.InstancedMesh(new THREE.CylinderGeometry(r, r, 1, 8, 1, false), noOutline(new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthTest: false, depthWrite: false })), DASH_MAX); m.count = 0; m.frustumCulled = false; m.renderOrder = order; m.visible = false; scene.add(m); return m; };
+const dashGlow = dashMesh(0.13, GLOW, 0.55, 21), dashCore = dashMesh(0.055, 0xffffff, 1, 22);
+function setDashes(attr, n) { // dashes every DASH+GAP metres along the arc polyline
+  const P = [], acc = [0];
+  for (let i = 0; i < n; i++) P.push(new V(attr.getX(i), attr.getY(i), attr.getZ(i)));
+  for (let i = 1; i < n; i++) acc.push(acc[i - 1] + P[i].distanceTo(P[i - 1]));
+  const at = d => { let i = 1; while (i < n - 1 && acc[i] < d) i++; const u = (d - acc[i - 1]) / Math.max(1e-6, acc[i] - acc[i - 1]); return P[i - 1].clone().lerp(P[i], clamp(u, 0, 1)); };
+  let k = 0;
+  for (let d = 0; n > 1 && d < acc[n - 1] && k < DASH_MAX; d += DASH + GAP) {
+    const p0 = at(d), p1 = at(Math.min(acc[n - 1], d + DASH)), seg = p1.clone().sub(p0), l = seg.length(); if (l < 1e-4) continue;
+    _dq.setFromUnitVectors(_up, seg.divideScalar(l)); _dm.compose(p0.clone().lerp(p1, 0.5), _dq, new V(1, l, 1));
+    dashGlow.setMatrixAt(k, _dm); dashCore.setMatrixAt(k, _dm); k++;
+  }
+  for (const m of [dashGlow, dashCore]) { m.count = k; m.instanceMatrix.needsUpdate = true; }
+}
 function xTex() {
   const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d');
-  g.lineCap = 'round'; g.beginPath(); g.moveTo(14, 14); g.lineTo(50, 50); g.moveTo(50, 14); g.lineTo(14, 50);
-  g.strokeStyle = '#1b1830'; g.lineWidth = 15; g.stroke(); g.strokeStyle = '#fff'; g.lineWidth = 8; g.stroke();
+  c.width = c.height = 128; g.lineCap = 'round'; g.beginPath(); g.moveTo(32, 32); g.lineTo(96, 96); g.moveTo(96, 32); g.lineTo(32, 96);
+  g.shadowColor = '#8fd8ff'; g.shadowBlur = 18; g.strokeStyle = '#8fd8ff'; g.lineWidth = 34; g.stroke(); g.stroke(); // light-blue glow
+  g.shadowBlur = 0; g.strokeStyle = '#1b1830'; g.lineWidth = 26; g.stroke(); g.strokeStyle = '#fff'; g.lineWidth = 17; g.stroke();
   return new THREE.CanvasTexture(c);
 }
-const landMark = new THREE.Sprite(noOutline(new THREE.SpriteMaterial({ map: xTex(), transparent: true, opacity: 0.6, depthTest: false, depthWrite: false })));
-landMark.scale.setScalar(0.85); landMark.visible = false; landMark.renderOrder = 4; scene.add(landMark);
+const landMark = new THREE.Sprite(noOutline(new THREE.SpriteMaterial({ map: xTex(), transparent: true, opacity: 0.95, depthTest: false, depthWrite: false })));
+const MARK_SIZE = 1.75; // ~2x the v5.4 X, pulses a little
+landMark.scale.setScalar(MARK_SIZE); landMark.visible = false; landMark.renderOrder = 23; scene.add(landMark);
 let guideKey = '';
 const guideOn = () => { const L = S.last[S.turn]; return !!L && S.phase === 'aim' && myTurn() && !S.play; };
 function updateGuide() {
   const on = guideOn(), L = on ? S.last[S.turn] : null;
-  ghostLine.visible = on; landMark.visible = on && !!L.land;
+  ghostLine.visible = on; landMark.visible = on && !!L.land; dashGlow.visible = dashCore.visible = on;
+  if (on) { const t = performance.now() / 1000, pu = 1 + 0.12 * Math.sin(t * 5); landMark.scale.setScalar(MARK_SIZE * pu); dashGlow.material.opacity = 0.45 + 0.15 * Math.sin(t * 5); }
   const lab = $('#lastShot'), txt = on ? lastText(L) : '';
   if (lab.textContent !== txt) lab.textContent = txt;
   lab.classList.toggle('hidden', !on || CAM.on || !!drag);
@@ -426,7 +446,7 @@ function updateGuide() {
     vel.y -= g * dt; pos.x += vel.x * dt; pos.y += vel.y * dt; pos.z += vel.z * dt;
   }
   attr.needsUpdate = true; ghostLine.geometry.setDrawRange(0, n); ghostLine.geometry.computeBoundingSphere(); ghostLine.computeLineDistances();
-  ghostLine.material.color.setHex(cols[S.turn]); landMark.material.color.setHex(cols[S.turn]).lerp(new THREE.Color(0xffffff), 0.35);
+  setDashes(attr, n); // white + light-blue glow for every player (v5.5): readable on grass, stone and sky
   if (L.land) landMark.position.set(L.land[0], L.land[1] + 0.35, L.land[2]);
 }
 function gauge(cur, last) { // readout bar with a tick at your last shot (turns green when you're on it)
@@ -438,6 +458,12 @@ const powPct = p => (p - POW_MIN) / (1 - POW_MIN) * 100, angPct = d => (d - PITC
 // Only while aiming on your turn or watching the opponent aim; any shot (or the round ending) hands the camera back to the cinematics.
 const CAM = { on: false, yaw: 0, pitch: 0.3, dist: 10, T: new V(), preset: 'me' }, CAM_MIN = 2.5, CAM_MAX = 48, P_MIN = -0.12, P_MAX = 1.35;
 const ptrs = new Map(); let pinch0 = 0;
+// v5.5: a custom view (orbit / zoom / Side / Enemy) STAYS after leaving camera mode: aiming, firing and spectating play from it.
+// One per player (hot-seat: each archer their own; online: yours). 'Me' clears it (default follow cam); kept across rounds, reset each new match.
+const VIEWS = [null, null];
+const saveView = () => { VIEWS[viewer()] = CAM.preset === 'me' ? null : { yaw: CAM.yaw, pitch: CAM.pitch, dist: CAM.dist, T: CAM.T.clone(), preset: CAM.preset }; };
+const myView = () => (S.mode !== 'menu' ? VIEWS[viewer()] : null);
+function resetViews() { VIEWS[0] = VIEWS[1] = null; }
 const camAllowed = () => (S.phase === 'aim' || S.phase === 'wait') && !S.play && S.mode !== 'menu';
 function camFrom(pos, look) {
   const d = pos.clone().sub(look); CAM.T.copy(look); CAM.dist = d.length(); CAM.yaw = Math.atan2(d.x, d.z); CAM.pitch = Math.asin(clamp(d.y / CAM.dist, -1, 1));
@@ -464,13 +490,13 @@ function blockAt(p, pad = 0.45) { // a live tower block the point is inside (or 
   }
   return null;
 }
-function camPose() {
-  camClamp();
-  const c = Math.cos(CAM.pitch), p = CAM.T.clone().add(new V(Math.sin(CAM.yaw) * c, Math.sin(CAM.pitch), Math.cos(CAM.yaw) * c).multiplyScalar(CAM.dist));
+function camPose(C = CAM) {
+  if (C === CAM) camClamp();
+  const c = Math.cos(C.pitch), p = C.T.clone().add(new V(Math.sin(C.yaw) * c, Math.sin(C.pitch), Math.cos(C.yaw) * c).multiplyScalar(C.dist));
   p.x = clamp(p.x, -60, 60); p.z = clamp(p.z, -60, 60);
   const gy = world.groundH(p.x, p.z) + 0.8; if (p.y < gy) p.y = gy; // never under the ground
   for (let k = 0, b; k < 60 && (b = blockAt(p)); k++) p.y = b.max.y + 0.05; // never inside a tower: rise over it
-  return [p, CAM.T.clone()];
+  return [p, C.T.clone()];
 }
 function camBar() {
   show('#camBar', CAM.on); $('#camBtn').classList.toggle('on', CAM.on);
@@ -479,11 +505,13 @@ function camBar() {
 function camEnter() {
   if (!camAllowed() || CAM.on) return;
   drag = null; show('#aimTip', false); if (myTurn()) { S.draw = 0; preview.visible = false; archers[S.turn].pose(S.aim.pitch, 0, true, S.types[S.turn]); }
-  CAM.on = true; ptrs.clear(); camPreset('me'); camBar(); updateHud();
+  CAM.on = true; ptrs.clear();
+  const v = myView(); if (v) { Object.assign(CAM, { yaw: v.yaw, pitch: v.pitch, dist: v.dist, preset: v.preset }); CAM.T.copy(v.T); camClamp(); camBar(); } else camPreset('me'); // re-open where you left it
+  camBar(); updateHud();
 }
-function camExit(snap = true) { // back to the aim view (snaps to the default)
+function camExit(snap = true) { // back to aiming: a custom view stays in place (v5.5), 'Me' snaps back to the default
   if (!CAM.on) return;
-  CAM.on = false; ptrs.clear(); if (snap) camJump = true; camBar(); updateHud();
+  saveView(); CAM.on = false; ptrs.clear(); if (snap) camJump = true; camBar(); updateHud();
 }
 
 // ---------- input (screen space, same for both players): drag UP/DOWN = higher/lower angle, RIGHT/LEFT = more/less power ----------
@@ -561,7 +589,7 @@ canvas.addEventListener('wheel', e => { // desktop zoom: camera mode, or the bui
 }, { passive: false });
 $('#camBtn').onclick = () => { sfx.unlock(); if (CAM.on) camExit(true); else camEnter(); };
 $('#camDone').onclick = () => camExit(true);
-document.querySelectorAll('#camBar [data-p]').forEach(b => b.onclick = () => { if (CAM.on) camPreset(b.dataset.p); });
+document.querySelectorAll('#camBar [data-p]').forEach(b => b.onclick = () => { if (CAM.on) { camPreset(b.dataset.p); saveView(); } });
 
 // ---------- UI wiring ----------
 for (const k of SPECIALS) { // extra ammo slots for earned specials (shown only while you hold one)
@@ -735,7 +763,7 @@ function enterBuild(m) {
   const st = newRound(Math.random), hot = m.mode === 'hot';
   Object.assign(S, { mode: m.mode, me: m.me || 0, turn: m.turn || 0, hp: [...st.hp], st, wind: { x: 0, z: 0 }, arenaId: m.arenaId, phase: hot ? 'pass' : 'build', winner: -1, play: null, queue: [], focus: null, draw: 0,
     best: m.best || 1, score: [...(m.score || [0, 0])], seriesWinner: -1, pending: null, cardT: 0, builds: null });
-  pickupKey = '-'; showPickup(null, false); S.last = [null, null]; camExit(true);
+  pickupKey = '-'; showPickup(null, false); S.last = [null, null]; camExit(true); resetViews();
   Object.assign(BS, { zoom: 1, side: hot ? 0 : S.me, tool: 'block', plans: [defaultPlan(), defaultPlan()], hist: [[], []], ghost: null, yaw: 0, online: !hot, ends: performance.now() + (m.time || BUILD_TIME) * 1000,
     locked: false, sent: false, oppReady: false, m, msg: '', err: false, secs: -1, color: towerColor(hot ? 0 : S.me) });
   BS.res = [0, 1].map(i => validateBuild(i, BS.plans[i]));
@@ -950,6 +978,8 @@ let camJump = true;
 function camTarget(t) {
   if (S.phase === 'menu') { const a = t * 0.06 + 1.2; return [new V(Math.cos(a) * 30, 17, Math.sin(a) * 30), new V(0, 4, 0)]; }
   if (S.phase === 'build' || S.phase === 'pass') return buildCam();
+  if (CAM.on) return camPose();
+  const cv = myView(); if (cv) return camPose(cv); // v5.5: the chosen view holds through aiming, the whole shot and the opponent's turn (no follow cam)
   const v = viewer(), fv = archers[v].f;
   let lead = S.play ? playLead() : null, focus = lead ? lead.m.getWorldPosition(new V()) : S.phase === 'over' ? S.focus : null;
   if (S.play && S.play.focus) focus = S.play.focus;
@@ -1142,12 +1172,14 @@ window.__game = {
   // v5.4 hooks: last-shot guide + camera mode
   guide: () => {
     const at = ghostLine.geometry.attributes.position, n = ghostLine.geometry.drawRange.count;
-    return { last: clone(S.last), ghost: ghostLine.visible, ghostN: Math.min(n, GHOST_N), ghost0: [at.getX(0), at.getY(0), at.getZ(0)], ghostCol: ghostLine.material.color.getHex(), dashed: ghostLine.material.isLineDashedMaterial,
+    return { last: clone(S.last), ghost: ghostLine.visible, ghostN: Math.min(n, GHOST_N), ghost0: [at.getX(0), at.getY(0), at.getZ(0)], ghostCol: ghostLine.material.color.getHex(), dashed: ghostLine.material.isLineDashedMaterial, dashes: dashCore.visible ? dashCore.count : 0, glow: dashGlow.material.color.getHex(),
+      markScale: landMark.scale.x, markTop: !landMark.material.depthTest && landMark.renderOrder > 10, arcTop: !dashCore.material.depthTest,
       mark: landMark.visible ? landMark.position.toArray() : null, label: $('#lastShot').textContent, labelVis: !$('#lastShot').classList.contains('hidden'), tip: $('#aimTip').innerHTML };
   },
   lastText,
   cam: () => ({ on: CAM.on, preset: CAM.preset, yaw: CAM.yaw, pitch: CAM.pitch, dist: CAM.dist, T: CAM.T.toArray(), pos: camera.position.toArray(), look: camLook.toArray(), want: CAM.on ? camPose()[0].toArray() : null,
     allowed: camAllowed(), ground: world.groundH(camera.position.x, camera.position.z), inBlock: !!blockAt(camera.position, 0), min: CAM_MIN, max: CAM_MAX, pmin: P_MIN, pmax: P_MAX, buildZoom: BS.zoom }),
+  views: () => VIEWS.map(v => v && { ...v, T: v.T.toArray() }), viewPose: () => { const v = myView(); return v ? camPose(v)[0].toArray() : null; },
   camEnter, camExit, camPreset, camSet: o => { Object.assign(CAM, o); if (o.T) CAM.T = new V(...o.T); CAM.preset = 'free'; camClamp(); },
   camPoseOf: o => { const keep = { ...CAM, T: CAM.T.clone() }; Object.assign(CAM, o); if (o.T) CAM.T = new V(...o.T); const r = camPose()[0]; Object.assign(CAM, keep); return { pos: r.toArray(), ground: world.groundH(r.x, r.z), inBlock: !!blockAt(r, 0) }; },
   aimCam: () => aimCam().map(v => v.toArray()),
