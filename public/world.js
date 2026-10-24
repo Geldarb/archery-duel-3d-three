@@ -262,7 +262,7 @@ export function buildArena(scene, world, lights) {
   return {
     fadeTrees,
     setTeamColors(cols) { cols.forEach((c, s) => { teamFlag[s].color.setHex(c); teamRoof[s].color.setHex(c); }); },
-    setBlocks, setBuildColors, blockHex, blockMesh: i => blocks[i], blocks, chunks, puff, explode, sparks, group,
+    setBlocks, setBuildColors, blockHex, debrisHex: () => debris.map(d => d.o.material.color.getHex()), blockMesh: i => blocks[i], blocks, chunks, puff, explode, sparks, group,
     resetBlocks(b) {
       for (const d of debris) d.o.removeFromParent();
       for (const f of fx) f.o.removeFromParent();

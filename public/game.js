@@ -1009,7 +1009,7 @@ window.__game = {
   buildPlace: (gx, gz) => buildTry([gx, gz]), buildArcher: (ax, az) => buildArcherTry([ax, az]), buildUndo: () => $('#bUndo').click(), buildReady: () => $('#bReady').click(),
   buildSkip: () => $('#bSkip').click(), passGo: () => $('#passGo').click(),
   buildColor: id => pickColor(id), blockColor: i => arena.blocks[i].userData.col, blockHex: i => arena.blockHex(i), // v5.3 colour hooks
-  blockRgb: i => arena.blocks[i].material.color.getHex(), get colors() { return S.colors; },
+  blockRgb: i => arena.blocks[i].material.color.getHex(), debrisHex: () => arena.debrisHex(), chunkHex: hex => new THREE.Color(hex).multiplyScalar(0.8).getHex(), get colors() { return S.colors; },
   cellScreen(gx, gz) { const s = BS.side, { r } = withBlock(s, BS.plans[s], [gx, gz]); const p = r.ok ? r.blocks.at(-1) : r.pos || [TX(s) + (gx + 0.5) * CELL, 5.4, (gz + 0.5) * CELL]; const q = new V(p[0], p[1] - 0.38, p[2]).project(camera); /* the surface the block would rest on */ return [(q.x + 1) / 2 * innerWidth, (1 - q.y) / 2 * innerHeight]; },
   validate: (s, plan) => validateBuild(s, plan), autoPlan, buildPlaceRaw: plan => { const s = BS.side, r = validateBuild(s, plan); if (r.ok) setPlan(plan, r); else buildMsg(r.err, true); return r; },
   pick: (x, y) => { const k = buildPick(x, y); return k && { p: k.p.toArray(), n: k.n.toArray(), block: k.block }; },
