@@ -37,6 +37,8 @@ export function sanitizeLook(l, slot = 0) { // anything unknown falls back to th
   return { name: cleanName(o.name, d.name), color: pick(o.color, PALETTE, d.color), helmet: pick(o.helmet, HELMETS, d.helmet),
     emblem: pick(o.emblem, EMBLEMS, d.emblem), bow: pick(o.bow, BOWS, d.bow), fletch: pick(o.fletch, FLETCH, d.fletch), taunt: t, tower: pick(o.tower, BLOCK_COLORS, d.tower) };
 }
+// v6.0 easter egg: a player named 'baldy mordy' (any case, trimmed) gets the cartoon dark-wizard skin. Cosmetic only.
+export const isBaldy = l => !!l && String(l.name ?? '').trim().toLowerCase() === 'baldy mordy';
 export const hexOf = (list, id) => (list.find(x => x.id === id) || list[0]).hex;
 // Team colours for the two seats; if both picked the same colour, seat 2 gets a darker/lighter tint so they stay distinguishable.
 export function teamColors(l0, l1) {

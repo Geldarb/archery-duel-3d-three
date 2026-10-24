@@ -13,3 +13,4 @@ bugshots/
 v45-*
 !public/icons/*.png
 v5-*
+docs/ref/

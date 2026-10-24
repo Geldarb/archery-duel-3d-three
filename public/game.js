@@ -6,7 +6,7 @@ import { HP, ARROWS, ARENA_IDS, SHOULDER, SPECIALS, LAYOUT, BUILD_MAX, CELL, BUI
 import { PhysRun, shotEvents, STEP } from './physics.js';
 import { SPECIAL_UI, pickupModel } from './specials.js';
 import { buildArena, heraldry, toon, noOutline } from './world.js';
-import { PALETTE, FLETCH, HELMETS, EMBLEMS, BOWS, TAUNTS, BLOCK_COLORS, DEFAULT_BLOCK, isBlockColor, sanitizeLook, teamColors, hexOf, cleanName } from './looks.js';
+import { PALETTE, FLETCH, HELMETS, EMBLEMS, BOWS, TAUNTS, BLOCK_COLORS, DEFAULT_BLOCK, isBlockColor, sanitizeLook, teamColors, hexOf, cleanName, isBaldy } from './looks.js';
 import * as sfx from './audio.js';
 
 const V = THREE.Vector3, X = new V(1, 0, 0), $ = s => document.querySelector(s), DEG = Math.PI / 180;
@@ -59,6 +59,10 @@ function makeArcher(i, look, color, parent = scene) { // chunky big-headed carto
   const skin = mat(0xffc9a0), team = mat(color), dark = mat(new THREE.Color(color).multiplyScalar(0.45)), boot = mat(0x6b3f1d), leather = mat(0x9a5b2a), gold = mat(0xf4c430);
   const hair = mat(0x5a3418), eye = mat(0x1d1d24), steel = mat(0xc9d0da), wood = mat(0x8f5326);
   const add = (geo, m, x, y, z, p = root) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = true; p.add(o); return o; };
+  const baldy = isBaldy(look); // v6.0 easter egg: cartoon dark-wizard parody (stylized toon, no real likeness)
+  const robe = mat(0x1d2b24), pale = mat(0xe4e8e6), bone = mat(0xe9e2cc), darkWood = mat(0x2a1a12);
+  if (baldy) wizardBody(add, color, robe, pale);
+  else {
   for (const z of [-0.13, 0.13]) { add(new THREE.CylinderGeometry(0.1, 0.1, 0.42, 10), dark, 0, 0.27, z); add(new RoundedBoxGeometry(0.3, 0.14, 0.17, 2, 0.05), boot, 0.04, 0.07, z); }
   const herald = toon(0xffffff, { map: heraldry(color, look.emblem) });
   add(new RoundedBoxGeometry(0.44, 0.62, 0.62, 3, 0.13), [herald, herald, team, team, team, team], 0, 0.8, 0); // tabard, emblem front and back
@@ -95,21 +99,25 @@ function makeArcher(i, look, color, parent = scene) { // chunky big-headed carto
     add(new THREE.TorusGeometry(0.33, 0.045, 8, 26), dark, 0, 1.52, 0).rotation.x = Math.PI / 2;
     const feather = add(new THREE.SphereGeometry(1, 12, 8), mat(fletch === 0xffffff ? 0xffffff : fletch), -0.12, 1.86, 0.2); feather.scale.set(0.06, 0.3, 0.035); feather.rotation.z = 0.7;
   }
-  const quiver = add(new THREE.CylinderGeometry(0.12, 0.1, 0.58, 12), leather, -0.3, 0.92, 0.12); quiver.rotation.set(0.25, 0, -0.35);
+  }
+  const quiver = add(new THREE.CylinderGeometry(0.12, 0.1, 0.58, 12), baldy ? robe : leather, -0.3, 0.92, 0.12); quiver.rotation.set(0.25, 0, -0.35);
   add(new THREE.TorusGeometry(0.12, 0.025, 6, 14), wood, 0, 0.29, 0, quiver).rotation.x = Math.PI / 2;
   const fl = mat(fletch); fl.side = THREE.DoubleSide;
   for (const [dx, dz] of [[0, 0], [0.05, 0.05], [-0.04, 0.05]]) { add(new THREE.CylinderGeometry(0.015, 0.015, 0.3, 5), wood, dx, 0.4, dz, quiver); add(new THREE.PlaneGeometry(0.1, 0.16), fl, dx, 0.55, dz, quiver); }
   const aim = new THREE.Group(); aim.position.set(0, SHOULDER, 0); root.add(aim); // shoulder pivot, +x = shot direction
   const sFront = new V(0.02, -0.05, 0.27), hand = new V(0.6, 0, 0.04), sBack = new V(0, -0.05, -0.27);
-  for (const z of [-0.29, 0.29]) add(new THREE.SphereGeometry(0.13, 12, 8), team, 0, -0.05, z, aim);
-  setLimb(add(new THREE.CylinderGeometry(0.09, 0.08, 1, 10), team, 0, 0, 0, aim), sFront, hand);
-  add(new THREE.CylinderGeometry(0.095, 0.095, 0.14, 10), leather, 0.47, 0, 0.06, aim).rotation.z = Math.PI / 2;
-  add(new THREE.SphereGeometry(0.09, 10, 8), leather, hand.x, hand.y, hand.z, aim);
+  const sleeve = baldy ? robe : team, glove = baldy ? pale : leather;
+  for (const z of [-0.29, 0.29]) add(new THREE.SphereGeometry(0.13, 12, 8), sleeve, 0, -0.05, z, aim);
+  setLimb(add(new THREE.CylinderGeometry(0.09, baldy ? 0.11 : 0.08, 1, 10), sleeve, 0, 0, 0, aim), sFront, hand);
+  add(new THREE.CylinderGeometry(0.095, 0.095, 0.14, 10), baldy ? robe : leather, 0.47, 0, 0.06, aim).rotation.z = Math.PI / 2;
+  add(new THREE.SphereGeometry(0.09, 10, 8), glove, hand.x, hand.y, hand.z, aim);
   const recurve = look.bow === 'recurve', ARC = Math.PI * (recurve ? 0.58 : 0.62), R = recurve ? 0.62 : 0.8; // cosmetic bow styles
-  const limbM = look.bow === 'gold' ? mat(0xffcf33) : recurve ? mat(0x5a3418) : wood;
-  const bow = add(new THREE.TorusGeometry(R, recurve ? 0.05 : 0.045, 8, 28, ARC), limbM, hand.x - R, 0, 0, aim); bow.rotation.z = -ARC / 2;
-  add(new THREE.CylinderGeometry(0.06, 0.06, 0.18, 10), look.bow === 'gold' ? mat(0xffffff) : gold, hand.x, 0, 0, aim);
-  if (look.bow === 'gold') add(new THREE.SphereGeometry(0.05, 10, 8), mat(0xe0342c), hand.x + 0.05, 0, 0, aim);
+  const limbM = baldy ? darkWood : look.bow === 'gold' ? mat(0xffcf33) : recurve ? mat(0x5a3418) : wood;
+  const bow = add(new THREE.TorusGeometry(R, baldy ? 0.03 : recurve ? 0.05 : 0.045, 8, 28, ARC), limbM, hand.x - R, 0, 0, aim); bow.rotation.z = -ARC / 2;
+  add(new THREE.CylinderGeometry(0.06, 0.06, 0.18, 10), baldy ? bone : look.bow === 'gold' ? mat(0xffffff) : gold, hand.x, 0, 0, aim);
+  if (baldy) { // wand-like: knobbly bone tips
+    for (const sg of [1, -1]) add(new THREE.SphereGeometry(0.05, 8, 6), bone, hand.x - R + R * Math.cos(ARC / 2), sg * R * Math.sin(ARC / 2), 0, aim);
+  } else if (look.bow === 'gold') add(new THREE.SphereGeometry(0.05, 10, 8), mat(0xe0342c), hand.x + 0.05, 0, 0, aim);
   let tipX = hand.x - R + R * Math.cos(ARC / 2), tipY = R * Math.sin(ARC / 2);
   if (recurve) { // tips curl forward
     for (const sg of [1, -1]) add(new THREE.CylinderGeometry(0.04, 0.03, 0.2, 8), limbM, tipX + 0.06, sg * (tipY + 0.07), 0, aim).rotation.z = sg * -0.75;
@@ -117,14 +125,15 @@ function makeArcher(i, look, color, parent = scene) { // chunky big-headed carto
   }
   const stringGeo = new THREE.BufferGeometry().setFromPoints([new V(tipX, tipY, 0), new V(tipX, 0, 0), new V(tipX, -tipY, 0)]);
   aim.add(new THREE.Line(stringGeo, noOutline(new THREE.LineBasicMaterial({ color: 0xffffff }))));
-  const armB = add(new THREE.CylinderGeometry(0.085, 0.075, 1, 10), team, 0, 0, 0, aim);
-  const handB = add(new THREE.SphereGeometry(0.085, 10, 8), leather, 0, 0, 0, aim);
+  const armB = add(new THREE.CylinderGeometry(0.085, baldy ? 0.105 : 0.075, 1, 10), sleeve, 0, 0, 0, aim);
+  const handB = add(new THREE.SphereGeometry(0.085, 10, 8), glove, 0, 0, 0, aim);
   let nocked = makeArrow('normal', fletch); aim.add(nocked);
   root.rotation.y = i ? Math.PI : 0;
   root.position.set(...initialPhys().a[i]);
   parent.add(root);
+  root.userData.baldy = baldy;
   const a = {
-    root, f, fletch,
+    root, f, fletch, baldy, aim,
     pose(pitch, draw, showArrow, type) {
       aim.rotation.set(0, 0, pitch);
       if (type && nocked.userData.type !== type) { aim.remove(nocked); nocked = makeArrow(type, fletch); nocked.userData.type = type; aim.add(nocked); }
@@ -137,6 +146,21 @@ function makeArcher(i, look, color, parent = scene) { // chunky big-headed carto
   };
   a.pose(0.5, 0, true);
   return a;
+}
+function wizardBody(add, color, robe, pale) { // v6.0 'baldy mordy': bald pale toon wizard in long high-collared dark robes, no helmet
+  const robeD = robe.clone(); robeD.side = THREE.DoubleSide;
+  for (const z of [-0.12, 0.12]) add(new RoundedBoxGeometry(0.26, 0.1, 0.15, 2, 0.04), mat(0x141414), 0.06, 0.05, z); // pointy dark shoes peeking out
+  add(new THREE.CylinderGeometry(0.3, 0.46, 1.0, 18), robe, 0, 0.55, 0); // long robe to the floor
+  add(new THREE.CylinderGeometry(0.29, 0.31, 0.3, 18), robe, 0, 1.05, 0); // chest
+  add(new THREE.TorusGeometry(0.32, 0.03, 6, 22), mat(color), 0, 0.72, 0).rotation.x = Math.PI / 2; // thin team-colour sash so sides stay readable
+  add(new THREE.CylinderGeometry(0.3, 0.21, 0.26, 18, 1, true, Math.PI * 0.35, Math.PI * 1.3), robeD, 0, 1.27, 0).rotation.y = Math.PI; // high open collar behind the head
+  add(new THREE.BoxGeometry(0.03, 0.5, 0.05), mat(0x0e1712), 0.3, 0.95, 0); // robe seam
+  add(new THREE.SphereGeometry(0.3, 22, 16), pale, 0, 1.43, 0).scale.set(1, 1.08, 0.96); // smooth bald dome
+  for (const z of [-0.285, 0.285]) add(new THREE.SphereGeometry(0.06, 8, 6), pale, -0.02, 1.4, z).scale.set(0.7, 1.2, 0.6);
+  const eye = mat(0x2a2030), slit = mat(0x6d7270), lip = mat(0xb4a4a6);
+  for (const z of [-0.1, 0.1]) { add(new THREE.SphereGeometry(0.04, 8, 6), eye, 0.27, 1.46, z).scale.set(0.5, 0.75, 1.15); add(new THREE.BoxGeometry(0.02, 0.025, 0.1), mat(0xc4cac8), 0.285, 1.52, z).rotation.x = z > 0 ? -0.25 : 0.25; }
+  for (const z of [-0.028, 0.028]) add(new THREE.SphereGeometry(0.02, 6, 4), slit, 0.3, 1.37, z).scale.set(0.5, 0.45, 1.4); // flat slit nose
+  add(new THREE.BoxGeometry(0.02, 0.016, 0.13), lip, 0.282, 1.29, 0); // thin lips
 }
 // ---------- player looks (cosmetic) ----------
 const loadLook = slot => { try { return sanitizeLook(JSON.parse(localStorage.getItem(`ad3t-look-${slot}`)), slot); } catch { return sanitizeLook(null, slot); } };
@@ -181,6 +205,27 @@ function showPickup(p, pop) { // the floating power-up balloon (state lives in S
   if (pop) { flash('A power-up floats in!'); sfx.ding(); }
 }
 const fading = [];
+// v6.0: little timed animations (sparkles, cow wander, boot drop, victory ragdoll/dance). fn(t, dt) returns false when done.
+const anims = [];
+const anim = (fn, tag = 'game') => { const a = { fn, t: 0, tag }; anims.push(a); return a; };
+function tickAnims(dt) { for (let i = anims.length - 1; i >= 0; i--) { const a = anims[i]; a.t += dt; if (a.fn(a.t, dt) === false) anims.splice(i, 1); } }
+function clearAnims(tag = 'game') { for (let i = anims.length - 1; i >= 0; i--) if (anims[i].tag === tag) { const a = anims.splice(i, 1)[0]; if (a.clean) a.clean(); } }
+const starGeo = new THREE.OctahedronGeometry(1, 0);
+function sparkle(parent, pos, size = 1, tag = 'game') { // twinkly burst of little stars
+  const g = new THREE.Group(); g.position.copy(pos); parent.add(g);
+  const cs = [0xfff3a0, 0xffffff, 0x9dffb0, 0xd9a6ff], parts = [];
+  for (let k = 0; k < 18; k++) {
+    const m = new THREE.Mesh(starGeo, noOutline(new THREE.MeshBasicMaterial({ color: cs[k % 4], transparent: true, depthWrite: false })));
+    const d = new V(Math.random() - 0.5, Math.random() * 0.9 - 0.2, Math.random() - 0.5).normalize().multiplyScalar((0.6 + Math.random() * 0.8) * size);
+    m.scale.setScalar(0.05 * size); g.add(m); parts.push([m, d]);
+  }
+  const a = anim((t) => {
+    for (const [m, d] of parts) { m.position.copy(d).multiplyScalar(Math.min(1, t * 2.2) * (1 + t * 0.3)); m.rotation.y = t * 8; m.material.opacity = Math.max(0, 1 - t / 1.2); m.scale.setScalar(0.05 * size * (1 + Math.sin(t * 20 + d.x * 9) * 0.4)); }
+    if (t > 1.2) { g.removeFromParent(); return false; }
+  }, tag);
+  a.clean = () => g.removeFromParent();
+  return g;
+}
 function startMatch({ arenaId, mode, me = 0, turn = 0, st = null, wind, looks: ls = [loadLook(0), loadLook(1)], best = 1, score = [0, 0], builds = null, colors = null }) {
   const fromBuild = S.phase === 'build' || S.phase === 'pass';
   endBuildUi();
@@ -190,6 +235,7 @@ function startMatch({ arenaId, mode, me = 0, turn = 0, st = null, wind, looks: l
   stuck.length = 0;
   for (const f of fading) f.o.removeFromParent();
   fading.length = 0;
+  clearAnims(); resetVictoryPose();
   S.rand = rng((Math.random() * 2 ** 32) >>> 0); // hot-seat power-up spawns (online: the server's seeded rng)
   st = clone(st || newRound(S.rand, builds)); // every round of a series resets to the layout built at its start
   S.builds = builds;
@@ -208,6 +254,10 @@ function startMatch({ arenaId, mode, me = 0, turn = 0, st = null, wind, looks: l
   $('#homeBtn').textContent = mode === 'online' ? 'Leave room' : 'Main menu';
   camJump = true; updateHud();
   if (fromBuild) flash('Towers revealed!');
+  if (score[0] + score[1] === 0 && archers.some(a => a.baldy)) { // reveal the easter-egg wizard with a sparkle at the start of a series
+    for (const a of archers) if (a.baldy) sparkle(scene, a.root.position.clone().add(new V(0, 1.3, 0)), 1.3);
+    sfx.sparkle(); S.baldyRevealed = (S.baldyRevealed || 0) + 1;
+  }
 }
 const pickArena = () => (S.arenaChoice === 'random' ? ARENA_IDS[Math.floor(Math.random() * ARENA_IDS.length)] : S.arenaChoice);
 const quickHot = (arenaId = pickArena(), turn = 0, builds = null) => startMatch({ arenaId, mode: 'hot', wind: randomWind(), turn, best: S.seriesChoice, builds }); // a new series, no build phase
@@ -732,6 +782,7 @@ function enterBuild(m) {
   stuck.length = 0;
   for (const f of fading) f.o.removeFromParent();
   fading.length = 0;
+  clearAnims(); resetVictoryPose();
   const st = newRound(Math.random), hot = m.mode === 'hot';
   Object.assign(S, { mode: m.mode, me: m.me || 0, turn: m.turn || 0, hp: [...st.hp], st, wind: { x: 0, z: 0 }, arenaId: m.arenaId, phase: hot ? 'pass' : 'build', winner: -1, play: null, queue: [], focus: null, draw: 0,
     best: m.best || 1, score: [...(m.score || [0, 0])], seriesWinner: -1, pending: null, cardT: 0, builds: null });
@@ -1022,6 +1073,7 @@ function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
   time += dt;
   if (S.play) updatePlay(dt);
+  tickAnims(dt);
   if (pickupObj) { const u = pickupObj.userData; u.tick(time); if (u.pop < 1) { u.pop = Math.min(1, u.pop + dt * 2.5); pickupObj.scale.setScalar(PICKUP_SCALE * Math.max(0.01, Math.sin(u.pop * Math.PI * 0.75) / Math.sin(Math.PI * 0.75))); } }
   for (let i = fading.length - 1; i >= 0; i--) { const f = fading[i]; f.t -= dt * 0.7; f.o.scale.setScalar(Math.max(0.01, f.t)); if (f.t <= 0) { f.o.removeFromParent(); fading.splice(i, 1); } }
   fpsN++; if (time - fpsT0 >= 1) { S.fps = fpsN / (time - fpsT0); fpsN = 0; fpsT0 = time; }
@@ -1111,7 +1163,14 @@ document.querySelectorAll('.cyc').forEach(c => c.querySelectorAll('button').forE
   const list = pickers[k], i = list.findIndex(x => x[0] === cLook[k]);
   setLook({ [k]: list[(i + d + list.length) % list.length][0] });
 }));
-$('#nameIn').oninput = () => { const n = cleanName($('#nameIn').value, ''); cLook = sanitizeLook({ ...cLook, name: n || ['Blue', 'Red'][cSlot] }, cSlot); saveLook(cSlot, cLook); };
+$('#nameIn').oninput = () => {
+  const was = isBaldy(cLook), n = cleanName($('#nameIn').value, '');
+  cLook = sanitizeLook({ ...cLook, name: n || ['Blue', 'Red'][cSlot] }, cSlot); saveLook(cSlot, cLook);
+  if (isBaldy(cLook) !== was) { // v6.0: live easter-egg swap in the preview
+    renderCustom();
+    if (isBaldy(cLook)) { sparkle(pvScene, new V(0, 1.1, 0), 1.1, 'pv'); sfx.sparkle(); S.pvSparkles = (S.pvSparkles || 0) + 1; }
+  }
+};
 $('#nameIn').onblur = () => { $('#nameIn').value = cLook.name; };
 document.querySelectorAll('#custom .tabs button').forEach(b => b.onclick = () => { cSlot = +b.dataset.slot; cLook = loadLook(cSlot); $('#nameIn').value = cLook.name; renderCustom(); });
 $('#customBtn').onclick = () => { sfx.unlock(); show('#home', false); openPanel('#custom'); cLook = loadLook(cSlot); $('#nameIn').value = cLook.name; renderCustom(); };
@@ -1208,3 +1267,5 @@ window.__game = {
   shootAim(aim, type = 'normal') { if (!myTurn()) return false; S.types[S.turn] = type; S.aim = aim; S.draw = 1; fire(); return true; },
 };
 window.__ready = true;
+// ---------- v6.0 victory show (visual only) ----------
+function resetVictoryPose() {}
