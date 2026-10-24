@@ -238,7 +238,7 @@ function fire() {
 function playShot(m) {
   if (S.play) { S.queue.push(m); return; }
   archers[m.shooter].pose(m.aim.pitch, 0, false);
-  recordLast(m);
+  recordLast(m); camExit(false); // the shot cinematics take the camera back
   const arrows = m.sim.arrows.map(x => { const mesh = makeArrow(m.sim.type, archers[m.shooter].fletch); mesh.visible = false; scene.add(mesh); stuck.push(mesh); return { ...x, m: mesh, landed: false }; });
   // live rigid-body playback from the same snapshot + impulses the server uses; the server's settled state is snapped in at the end
   const run = new PhysRun(S.st.phys, shotEvents(m.sim));
@@ -1148,7 +1148,7 @@ window.__game = {
   lastText,
   cam: () => ({ on: CAM.on, preset: CAM.preset, yaw: CAM.yaw, pitch: CAM.pitch, dist: CAM.dist, T: CAM.T.toArray(), pos: camera.position.toArray(), look: camLook.toArray(), want: CAM.on ? camPose()[0].toArray() : null,
     allowed: camAllowed(), ground: world.groundH(camera.position.x, camera.position.z), inBlock: !!blockAt(camera.position, 0), min: CAM_MIN, max: CAM_MAX, pmin: P_MIN, pmax: P_MAX, buildZoom: BS.zoom }),
-  camEnter, camExit, camPreset, camSet: o => { Object.assign(CAM, o); if (o.T) CAM.T = new V(...o.T); CAM.preset = 'free'; },
+  camEnter, camExit, camPreset, camSet: o => { Object.assign(CAM, o); if (o.T) CAM.T = new V(...o.T); CAM.preset = 'free'; camClamp(); },
   camPoseOf: o => { const keep = { ...CAM, T: CAM.T.clone() }; Object.assign(CAM, o); if (o.T) CAM.T = new V(...o.T); const r = camPose()[0]; Object.assign(CAM, keep); return { pos: r.toArray(), ground: world.groundH(r.x, r.z), inBlock: !!blockAt(r, 0) }; },
   aimCam: () => aimCam().map(v => v.toArray()),
   get looks() { return looks; }, get cols() { return cols; },
