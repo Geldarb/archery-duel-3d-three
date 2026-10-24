@@ -26,9 +26,12 @@ Promise.all([import('./public/sim.js'), import('./public/looks.js'), import('./p
     clearTimeout(r.timer);
     r.rand = sim.rng(Math.floor(Math.random() * 2 ** 32)); // seeded per round: power-up timing / position / kind
     Object.assign(r, { phase: 'play', st: sim.newRound(r.rand, r.builds), winner: -1, wind: sim.randomWind(), votes: new Set(), busy: 0 }); // every round resets to the built layout
+    if (TEST_AMMO) for (const am of r.st.ammo) for (const k of TEST_AMMO) if (k in am) am[k] += 2; // test-only (never set live): lets the local suites fire specials online
+    if (TEST_HP) r.st.hp = [TEST_HP, TEST_HP];
     r.socks.forEach((s, i) => s.emit('start', { arena: r.arena, you: i, st: r.st, turn: r.turn, wind: r.wind, looks: r.looks, best: r.best, score: r.score, colors: r.builds ? r.builds.map(b => b && b.colors) : null }));
   };
   // build phase (once per series): both players build privately; the server validates + stores each plan, reveals both at the start
+  const TEST_AMMO = (process.env.TEST_AMMO || '').split(',').filter(Boolean), TEST_HP = Number(process.env.TEST_HP) || 0; // test-only
   const LEGACY = process.env.LEGACY_TOWERS === '1'; // test-only: lets the regression suites keep the classic towers
   const BUILD_SECS = Math.max(5, Number(process.env.BUILD_SECS) || sim.BUILD_TIME);
   const finishBuild = r => {
@@ -100,7 +103,7 @@ Promise.all([import('./public/sim.js'), import('./public/looks.js'), import('./p
       r.turn = 1 - i; r.wind = sim.randomWind();
       if (r.winner >= 0) { // round over: score it; next round after the clients have played the shot back (loser shoots first)
         r.score[r.winner]++; r.seriesWinner = sim.seriesWinnerOf(r.score, r.best); r.turn = 1 - r.winner;
-        if (r.seriesWinner < 0) r.timer = setTimeout(() => { if (rooms.get(r.code) === r) start(r); }, (dur + 4) * 1000);
+        if (r.seriesWinner < 0) r.timer = setTimeout(() => { if (rooms.get(r.code) === r) start(r); }, (dur + 6.5) * 1000); // v6.0: room for the ragdoll + victory dance
       }
       io.to(r.code).emit('shot', { shooter: i, aim: a, sim: shot, st: r.st, dmg: res.dmg, log: res.log, steps: res.steps, got: next.got, turn: r.turn, wind: r.wind, winner: r.winner, score: r.score, seriesWinner: r.seriesWinner });
     });

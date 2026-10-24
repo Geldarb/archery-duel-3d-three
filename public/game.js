@@ -4,7 +4,7 @@ import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { HP, ARROWS, ARENA_IDS, SHOULDER, SPECIALS, LAYOUT, BUILD_MAX, CELL, BUILD_TIME, BUILD_LEVELS, DIST, validateBuild, defaultPlan, autoPlan, seriesWinnerOf, makeWorld, simulateShot, finishShot, newRound, rng, winnerOf, randomWind, launch, facing, yawOf, initialPhys, G } from './sim.js';
 import { PhysRun, shotEvents, STEP } from './physics.js';
-import { SPECIAL_UI, pickupModel } from './specials.js';
+import { SPECIAL_UI, pickupModel, bootModel } from './specials.js';
 import { buildArena, heraldry, toon, noOutline } from './world.js';
 import { PALETTE, FLETCH, HELMETS, EMBLEMS, BOWS, TAUNTS, BLOCK_COLORS, DEFAULT_BLOCK, isBlockColor, sanitizeLook, teamColors, hexOf, cleanName, isBaldy } from './looks.js';
 import * as sfx from './audio.js';
@@ -295,6 +295,9 @@ function playShot(m) {
   S.play = { arrows, ft: 0, hold: 1.0, m, run, fxi: 0, logi: 0, focus: null, chair: null, vy: new Float32Array(LAYOUT.length), puffs: 0, t0: performance.now() };
   S.phase = 'fly'; S.draw = 0; preview.visible = false;
   sfx.twang(); sfx.whoosh(Math.max(...arrows.map(a => a.res.t)) * 0.8);
+  if (m.sim.type === 'cow') sfx.moo();
+  if (m.sim.type === 'chicken') sfx.squawk();
+  S.play.squawkT = 0.45; S.play.bi = arrows.map(() => 0); S.fun = { type: m.sim.type, honks: 0, squawks: m.sim.type === 'chicken' ? 1 : 0, boot: null, cow: null };
   updateHud();
 }
 function land(a) {
@@ -302,7 +305,9 @@ function land(a) {
   const r = a.res, d = new V(...r.dir).normalize(), sp = a.m.userData.special;
   a.m.position.set(...r.pos).addScaledVector(d, sp ? -0.3 : 0.15);
   if (!sp) a.m.quaternion.setFromUnitVectors(X, d);
-  a.m.visible = r.kind !== 'out' && r.kind !== 'pickup' && sp !== 'bomb';
+  a.m.visible = r.kind !== 'out' && r.kind !== 'pickup' && sp !== 'bomb' && sp !== 'boot';
+  if (sp === 'chicken' && r.kind !== 'pickup') { sfx.honk(); a.m.rotation.set(0, a.m.rotation.y, Math.PI / 2 * archers[S.play.m.shooter].f); } // flops onto its back
+  if (sp === 'boot' && r.bootAt) giantBoot(r, S.play);
   if (r.kind === 'pickup') { // popped the balloon: the special goes to the shooter's ammo
     const k = r.pickup, UI = SPECIAL_UI[k];
     arena.puff(new V(...r.pos), 10, 0.28, undefined, 1.2, 0.4, 0.8); showPickup(null);
@@ -322,7 +327,52 @@ function land(a) {
   } else if (r.kind === 'stone') sfx.crack();
   else if (r.kind !== 'out' && !sp) sfx.thunk();
 }
-const LOG_TEXT = { ground: ['#ff8a5c', 'Fell to the ground!'], fall: ['#ffd0a0', 'Took a tumble!'], debris: ['#fff', ''], blast: ['#ff6a3a', ''], spin: ['#9ad0ff', ''] };
+const LOG_TEXT = { ground: ['#ff8a5c', 'Fell to the ground!'], fall: ['#ffd0a0', 'Took a tumble!'], debris: ['#fff', ''], blast: ['#ff6a3a', ''], spin: ['#9ad0ff', ''], cow: ['#fff3c4', ''], boot: ['#ffb36b', ''] };
+// ---------- v6.0 fun specials: client visuals only (gameplay is in sim.js / physics.js, identical on every machine) ----------
+function giantBoot(r, P) { // a giant boot falls out of the sky onto the landing spot and stomps (the physics 'boot' event lands at the same moment)
+  const T = ARROWS.boot, at = new V(...r.bootAt), top = at.y + 22, dur = T.delay / 60, f = archers[P.m.shooter].f;
+  const g = bootModel(5.2); g.position.set(at.x - 1.6 * f, top, at.z); g.rotation.y = f > 0 ? 0 : Math.PI; g.traverse(o => { o.castShadow = true; }); scene.add(g);
+  const shadow = new THREE.Mesh(new THREE.CircleGeometry(2.6, 28), noOutline(new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthWrite: false })));
+  shadow.rotation.x = -Math.PI / 2; shadow.position.set(at.x, world.groundH(at.x, at.z) + 0.05, at.z); scene.add(shadow);
+  S.fun.boot = { pos: r.bootAt, g };
+  const a = anim(t => {
+    const u = Math.min(1, t / dur);
+    g.position.y = top - (top - at.y) * u * u; g.rotation.z = (1 - u) * 0.35 * f;
+    shadow.material.opacity = 0.45 * u; shadow.scale.setScalar(0.4 + 0.6 * u);
+    if (t > dur + 1.1) { const k = Math.min(1, (t - dur - 1.1) / 0.8); g.position.y = at.y + k * k * 20; shadow.material.opacity = 0.45 * (1 - k); } // lifts back up into the sky
+    if (t > dur + 2) { a.clean(); return false; }
+  });
+  a.clean = () => { g.removeFromParent(); shadow.removeFromParent(); };
+}
+function cowWander(P, p) { // the flattened cow shakes itself off, then wanders away and fades
+  const a0 = P.arrows[0], cow = a0 && a0.m; if (!cow || cow.userData.special !== 'cow') return;
+  cow.visible = true; if (stuck.includes(cow)) stuck.splice(stuck.indexOf(cow), 1);
+  const gy = world.groundH(p.x, p.z), start = new V(p.x, Math.max(gy, p.y - 0.4), p.z), dir = new V(0, 0, p.z > 0 ? 1 : -1).add(new V(Math.random() - 0.5, 0, 0)).normalize();
+  const inner = cow.userData.inner, mats = []; cow.traverse(o => { if (o.material && !mats.includes(o.material)) { o.material = o.material.clone(); o.material.transparent = true; mats.push(o.material); } });
+  S.fun.cow = { pos: p.toArray(), cow };
+  const a = anim((t, dt) => {
+    if (t < 0.5) { cow.position.copy(start); cow.rotation.set(0, Math.atan2(-dir.z, dir.x), 0); cow.scale.set(1.25, 0.45 + t * 1.1, 1.25); return; } // pancake, then pop back up
+    cow.scale.setScalar(1);
+    const w = t - 0.5, pos = start.clone().addScaledVector(dir, w * 1.1); pos.y = world.groundH(pos.x, pos.z) + 0.6 + Math.abs(Math.sin(w * 7)) * 0.06;
+    if (start.y > pos.y) pos.y = Math.max(pos.y, start.y - w * 6); // hop down off the rubble
+    cow.position.copy(pos); if (inner.userData.tick) inner.userData.tick(w * 0.7);
+    if (w > 1.6) for (const m of mats) m.opacity = Math.max(0, 1 - (w - 1.6) / 1.2);
+    if (w > 2.9) { a.clean(); return false; }
+  });
+  a.clean = () => cow.removeFromParent();
+}
+function flightFun(P, dt) { // squawks, honks and flops while the fun specials fly
+  const type = P.m.sim.type;
+  P.arrows.forEach((a, n) => {
+    if (a.bounces) for (; P.bi[n] < a.bounces.length && P.ft >= a.bounces[P.bi[n]].t; P.bi[n]++) { // rubber chicken bounce
+      const b = a.bounces[P.bi[n]], at = new V(...b.pos);
+      sfx.honk(); S.fun.honks++; arena.puff(at, 4, 0.25, undefined, 0.8, 0.5, 0.7); floatText('HONK!', at.clone().add(new V(0, 0.6, 0)), '#ffd84a'); shake = Math.max(shake, 0.12);
+    }
+  });
+  if (type === 'chicken' && P.arrows.some(a => !a.landed && P.ft >= a.t0) && (P.squawkT -= dt) <= 0) { P.squawkT = 0.5 + Math.random() * 0.25; sfx.squawk(); S.fun.squawks++; }
+  for (const a of P.arrows) if (a.m.userData.tick && !a.landed) a.m.userData.tick(P.ft);
+  for (const a of P.arrows) if (a.m.userData.inner && a.m.userData.inner.userData.tick && !a.landed) a.m.userData.inner.userData.tick(P.ft);
+}
 function stepPhysics(P) {
   const run = P.run, target = Math.floor(P.ft / STEP + 1e-6);
   for (let n = 0; n < 8 && !run.done && run.k < target; n++) run.step(); // fixed 1/60 steps tied to playback time (slow-mo slows the stones too)
@@ -338,6 +388,8 @@ function stepPhysics(P) {
     const e = run.fx[P.fxi], p = new V(...e.p);
     if (e.kind === 'hit') { arena.chunks(p, 4, new V(...P.m.sim.arrows[0].res.dir).setY(0).normalize().multiplyScalar(0.6), arena.blockHex(e.i)); arena.puff(p, 3, 0.3); sfx.crunch(1); shake = Math.max(shake, 0.15); }
     else if (e.kind === 'blast') { arena.explode(p); sfx.boom(); shake = 1.0; flash('BOOM!'); P.focus = p; }
+    else if (e.kind === 'cow') { arena.puff(p, 16, 0.7, undefined, 2.6, 0.7, 1.6); arena.chunks(p, 10, new V(0, 2, 0)); sfx.stomp(); sfx.crumble(); shake = 0.9; flash('UDDERLY FLATTENED!'); P.focus = p; cowWander(P, p); }
+    else if (e.kind === 'boot') { arena.puff(p, 22, 0.8, undefined, 3.2, 0.5, 1.8); arena.chunks(p, 12, new V(0, 3, 0)); sfx.stomp(); shake = 1.3; flash('STOMP!'); P.focus = p; }
     else if (e.kind === 'chair') { P.chair = P.arrows[0].m; P.chair.visible = true; sfx.whir(ARROWS.wheelchair.spin + 0.3); flash('WHEEEEE!'); }
   }
   if (P.chair && run.chair) {
@@ -365,10 +417,14 @@ function updatePlay(dt) {
     if (i >= a.pts.length - 1) { land(a); continue; }
     const p0 = new V(...a.pts[i]), p1 = new V(...a.pts[i + 1]);
     a.m.position.lerpVectors(p0, p1, u - i);
-    if (a.m.userData.special) a.m.rotation.set(0, P.ft * 1.3, -P.ft * (a.m.userData.special === 'wheelchair' ? 9 : 4) * archers[P.m.shooter].f); // tumbling lob
+    const spc = a.m.userData.special, fs = archers[P.m.shooter].f;
+    if (spc === 'chicken') a.m.rotation.set(Math.sin(P.ft * 9) * 0.6, Math.sin(P.ft * 4) * 0.5 + (fs > 0 ? 0 : Math.PI), -P.ft * 5 * fs); // floppy cartwheel
+    else if (spc === 'cow') a.m.rotation.set(Math.sin(P.ft * 3) * 0.3, fs > 0 ? 0 : Math.PI, -P.ft * 2.2); // slow lobbed tumble, legs flailing
+    else if (spc) a.m.rotation.set(0, P.ft * 1.3, -P.ft * (spc === 'wheelchair' ? 9 : 4) * fs); // tumbling lob
     else a.m.quaternion.setFromUnitVectors(X, p1.sub(p0).normalize());
     a.m.visible = true;
   }
+  flightFun(P, dt);
   stepPhysics(P);
   if (P.arrows.every(a => a.landed) && P.run.done && (P.hold -= dt) <= 0) endShot();
 }
@@ -398,7 +454,7 @@ function endShot() {
   const mm = { winner: o.winner, seriesWinner: o.seriesWinner };
   if (mm.winner >= 0) S.score = [...o.score];
   if (mm.winner >= 0 && mm.seriesWinner < 0) { // round over: card, then the next round (loser shoots first; online the server sends it)
-    S.phase = 'round'; S.winner = mm.winner; S.cardT = 2.4;
+    S.phase = 'round'; S.winner = mm.winner; S.cardT = 4.6; startVictory(mm.winner);
     $('#roundCard b').textContent = S.mode === 'online' && mm.winner === S.me ? 'Round to you!' : `Round to ${nameOf(mm.winner)}!`;
     $('#roundCard span').textContent = `${S.score[0]} - ${S.score[1]}`; $('#roundCard').style.borderColor = css(cols[mm.winner]);
     show('#roundCard', true); sfx.ding();
@@ -411,7 +467,9 @@ function endShot() {
     $('#overScore').textContent = series ? `${nameOf(0)} ${S.score[0]} - ${S.score[1]} ${nameOf(1)}` : '';
     $('#rematch').textContent = series ? 'Rematch series' : 'Rematch';
     $('#overTitle').textContent = series ? 'Series over' : 'Match over';
-    $('#overMsg').textContent = ''; $('#rematch').disabled = false; show('#menu', false); openPanel('#over'); sfx.fanfare();
+    $('#overMsg').textContent = ''; $('#rematch').disabled = false; show('#menu', false);
+    const v = startVictory(w); // v6.0: let the ragdoll + dance play before the results panel
+    setTimeout(() => { if (S.phase === 'over' && S.victory === v) { openPanel('#over'); sfx.fanfare(); } }, window.__fastOver ? 0 : OVER_DELAY);
   } else {
     S.phase = 'aim';
     archers[S.turn].pose(0.5, 0, true, S.types[S.turn]);
@@ -991,6 +1049,7 @@ function updateHud() {
     b.classList.toggle('hidden', n <= 0); b.querySelector('em').textContent = `×${n}`; specials += n > 0;
   });
   $('#types').classList.toggle('many', specials > 0);
+  const nBtn = document.querySelectorAll('#types button:not(.hidden)').length; $('#types').classList.toggle('lots', nBtn > 5); $('#types').style.setProperty('--n', nBtn);
   $('#hint').textContent = CAM.on ? 'Drag to look around · pinch or wheel to zoom' : S.phase === 'aim' && S.draw === 0 ? (mine ? 'Drag ↑↓ angle · ←→ power · release to shoot' : 'Opponent is aiming…') : '';
   $('#muteBtn').textContent = `Sound: ${sfx.isMuted() ? 'off' : 'on'}`;
 }
@@ -1001,6 +1060,7 @@ let camJump = true;
 function camTarget(t) {
   if (S.phase === 'menu') { const a = t * 0.06 + 1.2; return [new V(Math.cos(a) * 30, 17, Math.sin(a) * 30), new V(0, 4, 0)]; }
   if (S.phase === 'build' || S.phase === 'pass') return buildCam();
+  if (S.victory && !S.play && ['round', 'over'].includes(S.phase)) return victoryCam(t);
   const v = viewer(), fv = archers[v].f;
   let lead = S.play ? playLead() : null, focus = lead ? lead.m.getWorldPosition(new V()) : S.phase === 'over' ? S.focus : null;
   if (S.play && S.play.focus) focus = S.play.focus;
@@ -1256,6 +1316,11 @@ window.__game = {
     return null;
   },
   setPickup(p) { if (S.mode !== 'hot') return false; S.st.pickup = p; showPickup(p, true); return true; }, // hot-seat test helper
+  // v6.0 hooks
+  fun: () => ({ ...(S.fun || {}), boot: S.fun && S.fun.boot ? S.fun.boot.pos : null, cow: S.fun && S.fun.cow ? S.fun.cow.pos : null, sounds: { ...sfx.played } }),
+  victory: () => S.victory ? { w: S.victory.w, l: S.victory.l, dance: S.victory.dance, t: S.victory.t, landed: S.victory.landed, lp: archers[S.victory.l].root.position.toArray(), lrot: archers[S.victory.l].root.rotation.z, wp: archers[S.victory.w].root.position.toArray(), wrot: archers[S.victory.w].root.rotation.toArray().slice(0, 3) } : null,
+  baldy: () => ({ archers: archers.map(a => a.baldy), preview: pvArcher ? pvArcher.baldy : null, pvSparkles: S.pvSparkles || 0, revealed: S.baldyRevealed || 0, names: looks.map(l => l.name) }),
+  setHp(i, hp) { if (S.mode !== 'hot') return false; S.st.hp[i] = hp; S.hp[i] = hp; updateHud(); return true; },
   giveAmmo(k, n = 1, who = S.turn) { if (S.mode !== 'hot') return false; S.st.ammo[who][k] += n; updateHud(); return true; },
   findHit(type = 'normal') { // search for a body hit with the current wind
     for (const pd of [35, 25, 45, 55, 15]) for (let pw = 0.4; pw <= 1; pw += 0.002) {
@@ -1267,5 +1332,46 @@ window.__game = {
   shootAim(aim, type = 'normal') { if (!myTurn()) return false; S.types[S.turn] = type; S.aim = aim; S.draw = 1; fire(); return true; },
 };
 window.__ready = true;
-// ---------- v6.0 victory show (visual only) ----------
-function resetVictoryPose() {}
+// ---------- v6.0 victory show (visual only): the loser ragdolls off in slow-mo, the winner dances on the rubble ----------
+const OVER_DELAY = 3400, DANCES = ['wiggle', 'spin', 'pump'];
+function startVictory(w) {
+  resetVictoryPose();
+  const l = 1 - w, W = archers[w], L = archers[l], dance = DANCES[(S.score[0] + S.score[1] + w + (S.danceSeed || 0)) % 3];
+  S.danceSeed = (S.danceSeed || 0) + 1;
+  const v = S.victory = { w, l, dance, t: 0, w0: W.root.position.clone(), l0: L.root.position.clone(), wy: W.root.rotation.y, ly: L.root.rotation.y, landed: false, poses: [] };
+  const away = new V(L.root.position.x - W.root.position.x, 0, L.root.position.z - W.root.position.z); away.y = 0;
+  v.away = away.lengthSq() > 1e-4 ? away.normalize() : new V(-W.f, 0, 0);
+  for (const A of [W, L]) A.root.rotation.order = 'YXZ';
+  L.pose(0.3, 0, false); W.pose(0.6, 0, false);
+  sfx.trombone(); setTimeout(() => { if (S.victory === v) sfx.jingle(); }, 900);
+  anim((t) => {
+    if (S.victory !== v || !['round', 'over'].includes(S.phase)) return false;
+    v.t = t;
+    // loser: slow-motion tumble backwards off the tower, limbs flopping, then lies flat on the ground
+    const u = Math.min(t, 3.2) * 0.42, gy = world.groundH(L.root.position.x, L.root.position.z);
+    if (!v.landed) {
+      const p = v.l0.clone().addScaledVector(v.away, 2.2 * u); p.y = v.l0.y + 2.6 * u - 4.9 * u * u;
+      if (p.y <= gy && u > 0.2) { p.y = gy; v.landed = true; v.landT = t; }
+      L.root.position.copy(p); L.root.rotation.set(Math.sin(t * 3) * 0.25, v.ly, Math.min(Math.PI / 2, t * 1.4) + Math.sin(t * 2) * 0.15 * (v.landed ? 0 : 1));
+    } else { const k = t - v.landT; L.root.rotation.set(0, v.ly, Math.PI / 2 + 0.08 * Math.sin(k * 6) * Math.exp(-k * 2)); L.root.position.y = gy + 0.32 + Math.abs(Math.sin(k * 7)) * 0.2 * Math.exp(-k * 3); }
+    L.aim.rotation.z = Math.sin(t * 5) * 0.9; // floppy bow arm
+    // winner: little dance on the rubble
+    const r = W.root;
+    if (v.dance === 'wiggle') { r.rotation.set(0, v.wy + Math.sin(t * 5) * 0.3, Math.sin(t * 10) * 0.22); r.position.y = v.w0.y + Math.abs(Math.sin(t * 10)) * 0.12; W.aim.rotation.z = 0.4 + Math.sin(t * 10) * 0.6; }
+    else if (v.dance === 'spin') { r.rotation.set(0, v.wy + t * 7, 0); r.position.y = v.w0.y + Math.abs(Math.sin(t * 7)) * 0.32; W.aim.rotation.z = 1.2; }
+    else { r.rotation.set(0, v.wy, Math.sin(t * 6) * 0.08); r.position.y = v.w0.y + Math.max(0, Math.sin(t * 12)) * 0.28; W.aim.rotation.z = 1.25 + Math.sin(t * 12) * 0.55; }
+    if (t > 1.2 && Math.random() < 0.06) sparkle(scene, r.position.clone().add(new V(0, 2.2, 0)), 0.6);
+  });
+  return v;
+}
+function resetVictoryPose() { // back to upright, facing each other
+  const v = S.victory; S.victory = null;
+  if (!v) return;
+  for (const A of archers) { A.root.rotation.order = 'XYZ'; A.pose(0.5, 0, true); }
+  placeArchers(S.st.phys.a);
+}
+function victoryCam(t) { // first the loser's tumble, then the winner's dance
+  const v = S.victory, W = archers[v.w], L = archers[v.l], por = camera.aspect < 0.9 ? 1.45 : 1;
+  if (v.t < 2.1) { const p = L.root.position.clone(); p.y = Math.max(p.y, 1.2); return [p.clone().add(new V(v.away.x * 3 - 2 * L.f * por, 2.6 * por, 7.5 * por)), p.clone().add(new V(0, 0.6, 0))]; }
+  const p = W.root.position.clone(); return [p.clone().add(new V(W.f * 3.6 * por, 1.9 * por, 3.4 * por)), p.clone().add(new V(0, 1.0, 0))];
+}

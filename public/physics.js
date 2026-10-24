@@ -18,6 +18,12 @@ export function shotEvents(shot) {
       ev.push({ k, kind: 'hit', i: r.block, j: d.map(x => x * T.push), p: r.pos });
     }
     if (T.land === 'blast') ev.push({ k, kind: 'blast', p: r.pos, R: T.radius, V: T.power * 0.42, D: T.blastDmg });
+    if (a.bounces) for (const b of a.bounces) if (b.kind === 'block') { // rubber chicken: a light shove at every block it bounces off
+      const h = Math.hypot(b.dir[0], b.dir[2]) || 1;
+      ev.push({ k: Math.ceil(b.t / STEP - 1e-6), kind: 'hit', i: b.block, j: [b.dir[0] / h, 0.12, b.dir[2] / h].map(x => x * T.push), p: b.pos });
+    }
+    if (T.land === 'cow') ev.push({ k, kind: 'cow', p: r.pos, R: T.radius, V: T.power, D: T.cowDmg });
+    if (T.land === 'boot' && r.bootAt) ev.push({ k: k + T.delay, kind: 'boot', p: r.bootAt, R: T.radius, V: T.power, D: T.bootDmg, land: k });
     if (T.land === 'spin') ev.push({ k, kind: 'chair', p: r.pos.map((x, n) => x - r.dir[n] * 0.4), v: r.dir.map(d => -d * 2), i: r.kind === 'block' ? r.block : -1, hit: r.pos, dir: r.dir });
   }
   return ev.sort((x, y) => x.k - y.k);
@@ -62,7 +68,7 @@ export class PhysRun {
   wakeNear(p, r = 7) { for (const b of [...this.live, ...this.archers]) if (b.position.distanceTo(p) < r) b.wakeUp(); }
   apply(e) {
     const p = v3(e.p);
-    this.wakeNear(p);
+    this.wakeNear(p, e.kind === 'boot' || e.kind === 'cow' ? 9 : 7);
     if (e.kind === 'hit') { // shove at the block's mid-height so it slides out (tablecloth-style) instead of digging in
       const b = this.blocks[e.i]; b.applyImpulse(v3(e.j), new C.Vec3(0, 0, 0)); this.fx.push({ k: this.k, kind: 'hit', i: e.i, p: e.p }); }
     else if (e.kind === 'blast') {
@@ -74,6 +80,25 @@ export class PhysRun {
         if (b.who !== undefined) this.hurt(b.who, Math.round(e.D * f), 'blast', this.feet(b.who));
       }
       this.fx.push({ k: this.k, kind: 'blast', p: e.p });
+    } else if (e.kind === 'cow') { // flattened: everything near the cow is shoved outward and down
+      for (const b of [...this.live, ...this.archers]) {
+        const dx = b.position.x - p.x, dz = b.position.z - p.z, dy = b.position.y - p.y, h = Math.hypot(dx, dz), dist = Math.hypot(h, dy);
+        if (dist >= e.R) continue;
+        const f = 1 - dist / e.R, ux = h > 1e-3 ? dx / h : 0, uz = h > 1e-3 ? dz / h : 0, arch = b.who !== undefined;
+        const d = arch ? new C.Vec3(ux * 0.8, 0.45, uz * 0.8) : new C.Vec3(ux, dy > -0.3 ? -0.55 : -0.2, uz);
+        b.wakeUp(); b.applyImpulse(d.scale(e.V * f * b.mass * (arch ? 0.2 : 1)), new C.Vec3(0, 0, 0));
+        if (arch) this.hurt(b.who, Math.round(e.D * f), 'cow', this.feet(b.who));
+      }
+      this.fx.push({ k: this.k, kind: 'cow', p: e.p });
+    } else if (e.kind === 'boot') { // giant boot stomp: huge downward shove on the whole column under it, damage in the radius
+      for (const b of [...this.live, ...this.archers]) {
+        const dx = b.position.x - p.x, dz = b.position.z - p.z, h = Math.hypot(dx, dz);
+        if (h >= e.R || b.position.y > p.y + 5) continue;
+        const f = 1 - 0.6 * h / e.R, ux = h > 1e-3 ? dx / h : 0, uz = h > 1e-3 ? dz / h : 0, arch = b.who !== undefined;
+        b.wakeUp(); b.applyImpulse(new C.Vec3(ux * 0.45, -1, uz * 0.45).scale(e.V * f * b.mass * (arch ? 0.12 : 1)), new C.Vec3(0, 0, 0));
+        if (arch) this.hurt(b.who, Math.round(e.D * f), 'boot', this.feet(b.who));
+      }
+      this.fx.push({ k: this.k, kind: 'boot', p: e.p });
     } else if (e.kind === 'chair') {
       let at = p, v = v3(e.v);
       if (e.i >= 0) { // clipped the top edge of a block: hop up onto it rather than bouncing off

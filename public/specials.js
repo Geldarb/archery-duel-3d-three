@@ -37,6 +37,55 @@ function wheelchairModel() { // friendly cartoon wheelchair in castle colours: b
   const pivot = new THREE.Group(); g.position.y = -0.36; pivot.add(g);
   return pivot;
 }
+// ---------- v6.0 fun batch ----------
+function chickenModel() { // floppy yellow rubber chicken: plump body, long bendy neck, red comb, orange beak, dangly legs
+  const g = new THREE.Group(), y = toon(0xffd84a), red = toon(0xe0342c), orange = toon(0xff9a1a), eye = toon(0x1d1d24);
+  add(g, new THREE.SphereGeometry(0.22, 16, 12), y, -0.25, 0, 0).scale.set(1.35, 0.8, 0.8);
+  add(g, new THREE.ConeGeometry(0.12, 0.22, 10), y, -0.58, 0.06, 0).rotation.z = Math.PI / 2 + 0.5; // tail
+  for (const z of [-0.17, 0.17]) add(g, new THREE.SphereGeometry(0.1, 10, 8), y, -0.25, 0.02, z).scale.set(1.3, 0.5, 0.4); // wings
+  const neck = new THREE.Group(); neck.position.set(-0.02, 0.04, 0); g.add(neck);
+  add(neck, new THREE.CylinderGeometry(0.055, 0.075, 0.36, 10), y, 0.14, 0.04, 0).rotation.z = -Math.PI / 2 + 0.35;
+  const head = new THREE.Group(); head.position.set(0.32, 0.1, 0); neck.add(head);
+  add(head, new THREE.SphereGeometry(0.1, 12, 10), y);
+  add(head, new THREE.ConeGeometry(0.045, 0.14, 8), orange, 0.13, -0.02, 0).rotation.z = -Math.PI / 2;
+  for (const x of [-0.04, 0.02, 0.07]) add(head, new THREE.SphereGeometry(0.035, 8, 6), red, x, 0.1, 0);
+  add(head, new THREE.SphereGeometry(0.03, 8, 6), red, 0.06, -0.1, 0).scale.y = 1.5; // wattle
+  for (const z of [-0.07, 0.07]) add(head, new THREE.SphereGeometry(0.02, 6, 4), eye, 0.06, 0.03, z);
+  const legs = [];
+  for (const z of [-0.08, 0.08]) { const l = new THREE.Group(); l.position.set(-0.22, -0.15, z); g.add(l); legs.push(l); add(l, new THREE.CylinderGeometry(0.018, 0.018, 0.22, 6), orange, 0, -0.1, 0); add(l, new THREE.ConeGeometry(0.05, 0.08, 3), orange, 0.02, -0.22, 0).rotation.z = -Math.PI / 2; }
+  g.userData.tick = t => { neck.rotation.z = Math.sin(t * 13) * 0.55; head.rotation.z = Math.sin(t * 13 + 1) * 0.4; legs.forEach((l, i) => { l.rotation.z = Math.sin(t * 17 + i * 2) * 0.8; }); };
+  return g;
+}
+function cowModel() { // chunky black-and-white cartoon cow, faces +x
+  const g = new THREE.Group(), w = toon(0xfafafa), blk = toon(0x26262c), pink = toon(0xffa6b8), horn = toon(0xf3e6c4);
+  add(g, new RoundedBoxGeometry(0.95, 0.52, 0.52, 3, 0.16), w, 0, 0.62, 0);
+  for (const [x, y, z, r] of [[0.15, 0.75, 0.25, 0.14], [-0.25, 0.6, -0.25, 0.16], [-0.3, 0.82, 0.12, 0.12], [0.25, 0.86, -0.08, 0.1]]) add(g, new THREE.SphereGeometry(r, 10, 8), blk, x, y, z).scale.set(1.3, 1, 0.35 + Math.abs(z) * 2.2);
+  const head = new THREE.Group(); head.position.set(0.55, 0.85, 0); g.add(head);
+  add(head, new RoundedBoxGeometry(0.32, 0.34, 0.34, 2, 0.1), w);
+  add(head, new RoundedBoxGeometry(0.16, 0.2, 0.3, 2, 0.07), pink, 0.17, -0.07, 0);
+  for (const z of [-0.07, 0.07]) { add(head, new THREE.SphereGeometry(0.022, 6, 4), blk, 0.25, -0.04, z); add(head, new THREE.SphereGeometry(0.035, 8, 6), blk, 0.13, 0.08, z * 1.6); }
+  for (const z of [-1, 1]) { add(head, new THREE.ConeGeometry(0.035, 0.14, 6), horn, -0.02, 0.2, z * 0.12).rotation.x = -z * 0.5; add(head, new THREE.SphereGeometry(0.07, 8, 6), w, -0.04, 0.08, z * 0.2).scale.set(0.5, 0.6, 1.3); }
+  const legs = [];
+  for (const [x, z] of [[0.32, 0.17], [0.32, -0.17], [-0.32, 0.17], [-0.32, -0.17]]) { const l = new THREE.Group(); l.position.set(x, 0.42, z); g.add(l); legs.push(l); add(l, new THREE.CylinderGeometry(0.07, 0.07, 0.34, 8), w, 0, -0.17, 0); add(l, new THREE.CylinderGeometry(0.075, 0.075, 0.08, 8), blk, 0, -0.36, 0); }
+  add(g, new THREE.SphereGeometry(0.1, 10, 8), pink, -0.05, 0.36, 0).scale.set(1.2, 0.6, 1); // udder
+  const tail = add(g, new THREE.CylinderGeometry(0.02, 0.02, 0.36, 5), w, -0.52, 0.66, 0); tail.rotation.z = -0.3;
+  g.userData.legs = legs; g.userData.head = head;
+  g.userData.tick = t => { legs.forEach((l, i) => { l.rotation.z = Math.sin(t * 14 + i * 1.6) * 0.9; }); head.rotation.z = Math.sin(t * 6) * 0.2; tail.rotation.z = -0.3 + Math.sin(t * 9) * 0.5; };
+  const pivot = new THREE.Group(); g.position.y = -0.6; pivot.add(g); pivot.userData.inner = g;
+  return pivot;
+}
+export function bootModel(scale = 1) { // big brown cartoon boot, toe points +x, sole at y = 0 (scale up for the giant stomp)
+  const g = new THREE.Group(), leather = toon(0x8a4b22), sole = toon(0x3a2416), lace = toon(0xf4e3b0), cuff = toon(0xb86a33);
+  add(g, new THREE.CylinderGeometry(0.2, 0.22, 0.5, 16), leather, -0.06, 0.38, 0);
+  add(g, new THREE.CylinderGeometry(0.235, 0.235, 0.1, 16), cuff, -0.06, 0.64, 0);
+  add(g, new RoundedBoxGeometry(0.62, 0.24, 0.36, 3, 0.1), leather, 0.1, 0.14, 0);
+  add(g, new THREE.SphereGeometry(0.18, 14, 10), leather, 0.34, 0.15, 0).scale.set(1, 0.75, 1.02);
+  add(g, new RoundedBoxGeometry(0.72, 0.07, 0.4, 2, 0.03), sole, 0.12, 0.035, 0);
+  for (const y of [0.3, 0.4, 0.5]) add(g, new THREE.BoxGeometry(0.03, 0.025, 0.22), lace, 0.15, y, 0).rotation.z = 0.2;
+  g.scale.setScalar(scale);
+  return g;
+}
+function bootProjectile() { const p = new THREE.Group(), b = bootModel(0.9); b.position.set(-0.1, -0.3, 0); p.add(b); return p; }
 const svg = (inner, bg = '') => `<svg viewBox="0 0 40 40">${bg}${inner}</svg>`;
 export const SPECIAL_UI = {
   bomb: { model: bombModel, color: 0xe0342c, label: 'Bomb',
@@ -45,6 +94,15 @@ export const SPECIAL_UI = {
   wheelchair: { model: wheelchairModel, color: 0x2f6fe0, label: 'Chair',
     icon: svg('<circle cx="16" cy="26" r="9" fill="none" stroke="#2a2a30" stroke-width="3"/><circle cx="16" cy="26" r="2" fill="#f4c430"/><path d="M12 11v11h12l4 8" stroke="#9aa3b2" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/><rect x="12" y="17" width="12" height="4" rx="1.5" fill="#2f6fe0"/><circle cx="30" cy="31" r="2.6" fill="#2a2a30"/><path d="M7 14l4-3" stroke="#2a2a30" stroke-width="3" stroke-linecap="round"/>'),
     spin: true },
+  chicken: { model: chickenModel, color: 0xffd84a, label: 'Chicken',
+    icon: svg('<ellipse cx="16" cy="25" rx="10" ry="7" fill="#ffd84a" stroke="#111" stroke-width="1.5"/><path d="M22 22q4-8 6-12" stroke="#ffd84a" stroke-width="5" stroke-linecap="round" fill="none"/><path d="M22 22q4-8 6-12" stroke="#111" stroke-width="1" fill="none" opacity=".3"/><circle cx="29" cy="9" r="4.5" fill="#ffd84a" stroke="#111" stroke-width="1.5"/><path d="M33 9l5 1.5-5 1.5z" fill="#ff9a1a" stroke="#111" stroke-width="1"/><path d="M26 5q1-3 3-1q1-3 3 0" fill="#e0342c" stroke="#111" stroke-width="1"/><circle cx="30" cy="8.5" r="1" fill="#111"/><path d="M14 32v5M19 32v5" stroke="#ff9a1a" stroke-width="2"/>'),
+    spin: false },
+  cow: { model: cowModel, color: 0x26262c, label: 'Cow',
+    icon: svg('<rect x="5" y="15" width="22" height="13" rx="5" fill="#fafafa" stroke="#111" stroke-width="1.5"/><ellipse cx="12" cy="20" rx="4" ry="3" fill="#26262c"/><ellipse cx="21" cy="25" rx="3" ry="2" fill="#26262c"/><rect x="25" y="10" width="11" height="11" rx="3.5" fill="#fafafa" stroke="#111" stroke-width="1.5"/><rect x="29" y="16" width="8" height="6" rx="2.5" fill="#ffa6b8" stroke="#111" stroke-width="1"/><path d="M26 10l-2-4M35 10l2-4" stroke="#f3e6c4" stroke-width="2.4" stroke-linecap="round"/><path d="M9 28v6M23 28v6" stroke="#fafafa" stroke-width="3.4"/><path d="M9 28v6M23 28v6" stroke="#111" stroke-width="1" opacity=".4"/>'),
+    spin: false },
+  boot: { model: bootProjectile, color: 0x8a4b22, label: 'Boot',
+    icon: svg('<path d="M10 4h12v17q8 1 12 5 2 3 0 6H6v-8q4-3 4-8z" fill="#8a4b22" stroke="#111" stroke-width="1.5" stroke-linejoin="round"/><rect x="5" y="31" width="30" height="5" rx="2" fill="#3a2416" stroke="#111" stroke-width="1.2"/><rect x="9" y="3" width="14" height="4" rx="1.5" fill="#b86a33" stroke="#111" stroke-width="1.2"/><path d="M15 12h6M15 16h6M15 20h6" stroke="#f4e3b0" stroke-width="1.8"/>'),
+    spin: false },
 };
 // floating power-up: a balloon carrying a crate that shows the special inside, with a glow and a bob
 export function pickupModel(kind) {

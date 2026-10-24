@@ -106,6 +106,12 @@ export const ARROWS = {
   split: { name: 'Split', dmg: [15, 30], push: 6, g: 1, wind: 1, split: true },
   bomb: { name: 'Bomb', dmg: [0, 0], push: 0, g: 1.3, wind: 0.3, special: true, land: 'blast', radius: 3.2, power: 34, blastDmg: 38 },
   wheelchair: { name: 'Wheelchair', dmg: [10, 15], push: 6, g: 1.25, wind: 0.5, special: true, land: 'spin', spin: 3, radius: 1.7, tick: 5, ticks: 6 },
+  // v6.0 fun batch. chicken: bounces off up to 2 surfaces (light shove on blocks), small damage on an archer.
+  chicken: { name: 'Chicken', dmg: [8, 12], push: 7, g: 1.05, wind: 1.2, special: true, land: 'bounce', bounces: 2, rest: 0.55 },
+  // cow: lobbed, flattens what it lands on (radial + downward shove) and hurts archers near the impact.
+  cow: { name: 'Cow', dmg: [10, 10], push: 0, g: 1.35, wind: 0.2, special: true, land: 'cow', radius: 3, power: 18, cowDmg: 24 },
+  // boot: a giant boot drops from the sky onto the landing spot (or the enemy tower at the aim line) `delay` steps later and stomps.
+  boot: { name: 'Giant Boot', dmg: [8, 8], push: 6, g: 1, wind: 0.8, special: true, land: 'boot', radius: 2.4, power: 22, bootDmg: 20, delay: 36 },
 };
 export const SPECIALS = Object.keys(ARROWS).filter(k => ARROWS[k].special);
 export const BASIC = Object.keys(ARROWS).filter(k => !ARROWS[k].special);
@@ -196,10 +202,10 @@ export function simulateShot(world, shooter, aim, wind, type = 'normal', st = { 
   const queue = [{ t0: 0, p: pos, v: vel, child: false }];
   let taken = false;
   while (queue.length) {
-    const a = queue.shift(), p = a.p, v = a.v, pts = [[r2(p.x), r2(p.y), r2(p.z)]];
+    const a = queue.shift(), p = a.p, v = a.v, pts = [[r2(p.x), r2(p.y), r2(p.z)]], bounces = [];
     let t = a.t0, res = null;
     for (let n = 1; n <= 12 * 240 && !res; n++) {
-      const vy0 = v.y;
+      const vy0 = v.y, px = p.x, py = p.y, pz = p.z;
       v.x += wind.x * T.wind * DT; v.z += wind.z * T.wind * DT; v.y -= G * T.g * DT;
       p.x += v.x * DT; p.y += v.y * DT; p.z += v.z * DT; t += DT;
       if (T.split && !a.child && vy0 > 0 && v.y <= 0) { // split into 3 at the top of the arc: high, middle and low (vertical spread, same line)
@@ -210,6 +216,16 @@ export function simulateShot(world, shooter, aim, wind, type = 'normal', st = { 
         }
       }
       const hit = collide(world, p, shooter, st, t, tb, taken);
+      if (hit && T.bounces && bounces.length < T.bounces && ['block', 'stone', 'ground'].includes(hit.kind) && Math.hypot(v.x, v.y, v.z) > 3) {
+        // rubber chicken: reflect off the surface (deterministic, same on server and clients) and keep flying
+        const sp = Math.hypot(v.x, v.y, v.z), nrm = bounceNormal(hit, p, v, st), dot = v.x * nrm[0] + v.y * nrm[1] + v.z * nrm[2];
+        bounces.push({ kind: hit.kind, block: hit.block, pos: [r2(p.x), r2(p.y), r2(p.z)], dir: [v.x / sp, v.y / sp, v.z / sp].map(r2), t: r2(t) });
+        if (dot < 0) { v.x -= 2 * dot * nrm[0]; v.y -= 2 * dot * nrm[1]; v.z -= 2 * dot * nrm[2]; }
+        v.x *= T.rest; v.y = Math.max(v.y * T.rest, 2.5); v.z *= T.rest; // always pop up a little
+        p.x = px; p.y = Math.max(py, hit.kind === 'ground' ? world.groundH(px, pz) + 0.05 : py); p.z = pz;
+        if (n % 4 === 0) pts.push([r2(p.x), r2(p.y), r2(p.z)]);
+        continue;
+      }
       if (hit) {
         if (hit.kind === 'pickup') taken = true;
         const sp = Math.hypot(v.x, v.y, v.z);
@@ -218,9 +234,29 @@ export function simulateShot(world, shooter, aim, wind, type = 'normal', st = { 
         pts.push(res.pos);
       } else if (n % 4 === 0) pts.push([r2(p.x), r2(p.y), r2(p.z)]);
     }
-    out.push({ t0: r2(a.t0), pts, res: res || { kind: 'out', dmg: 0, pos: pts[pts.length - 1], dir: [1, 0, 0], speed: 0, t: r2(t) } });
+    const arrow = { t0: r2(a.t0), pts, res: res || { kind: 'out', dmg: 0, pos: pts[pts.length - 1], dir: [1, 0, 0], speed: 0, t: r2(t) } };
+    if (bounces.length) arrow.bounces = bounces;
+    if (T.land === 'boot' && arrow.res.kind !== 'pickup') { // where the giant boot comes down
+      const r = arrow.res, e = st.phys.a[1 - shooter];
+      if (r.kind !== 'out') arrow.res.bootAt = r.pos;
+      else { // flew off: stomp the enemy tower area on the aim line (the trajectory point nearest the enemy's x)
+        let best = pts[0]; for (const q of pts) if (Math.abs(q[0] - e[0]) < Math.abs(best[0] - e[0])) best = q;
+        const bz = Math.max(e[2] - 1.5, Math.min(e[2] + 1.5, best[2]));
+        arrow.res.bootAt = [r2(e[0]), r2(Math.max(world.groundH(e[0], bz), e[1])), r2(bz)];
+      }
+    }
+    out.push(arrow);
   }
   return { type: ARROWS[type] ? type : 'normal', arrows: out };
+}
+function bounceNormal(hit, p, v, st) { // surface normal for a bounce: ground = up, block = its face nearest the hit point, scenery = straight back
+  if (hit.kind === 'ground') return [0, 1, 0];
+  if (hit.kind === 'block') {
+    const b = st.phys.b[hit.block], h = LAYOUT[hit.block].half, d = [p.x - b[0], p.y - b[1], p.z - b[2]];
+    let ax = 0, best = -1; for (let k = 0; k < 3; k++) { const r = Math.abs(d[k]) / h[k]; if (r > best) { best = r; ax = k; } }
+    const n = [0, 0, 0]; n[ax] = Math.sign(d[ax]) || 1; return n;
+  }
+  const s = Math.hypot(v.x, v.y, v.z) || 1; return [-v.x / s, -v.y / s, -v.z / s];
 }
 // ---------- sky power-ups ----------
 // Every 2-4 turns (max one at a time) a power-up floats in the sky between the towers; hitting it grants a special for your next shots.
