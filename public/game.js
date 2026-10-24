@@ -4,9 +4,9 @@ import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { HP, ARROWS, ARENA_IDS, SHOULDER, SPECIALS, LAYOUT, BUILD_MAX, CELL, BUILD_TIME, BUILD_LEVELS, DIST, validateBuild, defaultPlan, autoPlan, seriesWinnerOf, makeWorld, simulateShot, finishShot, newRound, rng, winnerOf, randomWind, launch, facing, yawOf, initialPhys, G } from './sim.js';
 import { PhysRun, shotEvents, STEP } from './physics.js';
-import { SPECIAL_UI, pickupModel, bootModel } from './specials.js';
+import { SPECIAL_UI, pickupModel } from './specials.js';
 import { buildArena, heraldry, toon, noOutline } from './world.js';
-import { PALETTE, FLETCH, HELMETS, EMBLEMS, BOWS, TAUNTS, BLOCK_COLORS, DEFAULT_BLOCK, isBlockColor, sanitizeLook, teamColors, hexOf, cleanName, isBaldy } from './looks.js';
+import { PALETTE, FLETCH, HELMETS, EMBLEMS, BOWS, TAUNTS, BLOCK_COLORS, DEFAULT_BLOCK, isBlockColor, sanitizeLook, teamColors, hexOf, cleanName } from './looks.js';
 import * as sfx from './audio.js';
 
 const V = THREE.Vector3, X = new V(1, 0, 0), $ = s => document.querySelector(s), DEG = Math.PI / 180;
@@ -59,10 +59,6 @@ function makeArcher(i, look, color, parent = scene) { // chunky big-headed carto
   const skin = mat(0xffc9a0), team = mat(color), dark = mat(new THREE.Color(color).multiplyScalar(0.45)), boot = mat(0x6b3f1d), leather = mat(0x9a5b2a), gold = mat(0xf4c430);
   const hair = mat(0x5a3418), eye = mat(0x1d1d24), steel = mat(0xc9d0da), wood = mat(0x8f5326);
   const add = (geo, m, x, y, z, p = root) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = true; p.add(o); return o; };
-  const baldy = isBaldy(look); // v6.0 easter egg: cartoon dark-wizard parody (stylized toon, no real likeness)
-  const robe = mat(0x1d2b24), pale = mat(0xe4e8e6), bone = mat(0xe9e2cc), darkWood = mat(0x2a1a12);
-  if (baldy) wizardBody(add, color, robe, pale);
-  else {
   for (const z of [-0.13, 0.13]) { add(new THREE.CylinderGeometry(0.1, 0.1, 0.42, 10), dark, 0, 0.27, z); add(new RoundedBoxGeometry(0.3, 0.14, 0.17, 2, 0.05), boot, 0.04, 0.07, z); }
   const herald = toon(0xffffff, { map: heraldry(color, look.emblem) });
   add(new RoundedBoxGeometry(0.44, 0.62, 0.62, 3, 0.13), [herald, herald, team, team, team, team], 0, 0.8, 0); // tabard, emblem front and back
@@ -99,25 +95,21 @@ function makeArcher(i, look, color, parent = scene) { // chunky big-headed carto
     add(new THREE.TorusGeometry(0.33, 0.045, 8, 26), dark, 0, 1.52, 0).rotation.x = Math.PI / 2;
     const feather = add(new THREE.SphereGeometry(1, 12, 8), mat(fletch === 0xffffff ? 0xffffff : fletch), -0.12, 1.86, 0.2); feather.scale.set(0.06, 0.3, 0.035); feather.rotation.z = 0.7;
   }
-  }
-  const quiver = add(new THREE.CylinderGeometry(0.12, 0.1, 0.58, 12), baldy ? robe : leather, -0.3, 0.92, 0.12); quiver.rotation.set(0.25, 0, -0.35);
+  const quiver = add(new THREE.CylinderGeometry(0.12, 0.1, 0.58, 12), leather, -0.3, 0.92, 0.12); quiver.rotation.set(0.25, 0, -0.35);
   add(new THREE.TorusGeometry(0.12, 0.025, 6, 14), wood, 0, 0.29, 0, quiver).rotation.x = Math.PI / 2;
   const fl = mat(fletch); fl.side = THREE.DoubleSide;
   for (const [dx, dz] of [[0, 0], [0.05, 0.05], [-0.04, 0.05]]) { add(new THREE.CylinderGeometry(0.015, 0.015, 0.3, 5), wood, dx, 0.4, dz, quiver); add(new THREE.PlaneGeometry(0.1, 0.16), fl, dx, 0.55, dz, quiver); }
   const aim = new THREE.Group(); aim.position.set(0, SHOULDER, 0); root.add(aim); // shoulder pivot, +x = shot direction
   const sFront = new V(0.02, -0.05, 0.27), hand = new V(0.6, 0, 0.04), sBack = new V(0, -0.05, -0.27);
-  const sleeve = baldy ? robe : team, glove = baldy ? pale : leather;
-  for (const z of [-0.29, 0.29]) add(new THREE.SphereGeometry(0.13, 12, 8), sleeve, 0, -0.05, z, aim);
-  setLimb(add(new THREE.CylinderGeometry(0.09, baldy ? 0.11 : 0.08, 1, 10), sleeve, 0, 0, 0, aim), sFront, hand);
-  add(new THREE.CylinderGeometry(0.095, 0.095, 0.14, 10), baldy ? robe : leather, 0.47, 0, 0.06, aim).rotation.z = Math.PI / 2;
-  add(new THREE.SphereGeometry(0.09, 10, 8), glove, hand.x, hand.y, hand.z, aim);
+  for (const z of [-0.29, 0.29]) add(new THREE.SphereGeometry(0.13, 12, 8), team, 0, -0.05, z, aim);
+  setLimb(add(new THREE.CylinderGeometry(0.09, 0.08, 1, 10), team, 0, 0, 0, aim), sFront, hand);
+  add(new THREE.CylinderGeometry(0.095, 0.095, 0.14, 10), leather, 0.47, 0, 0.06, aim).rotation.z = Math.PI / 2;
+  add(new THREE.SphereGeometry(0.09, 10, 8), leather, hand.x, hand.y, hand.z, aim);
   const recurve = look.bow === 'recurve', ARC = Math.PI * (recurve ? 0.58 : 0.62), R = recurve ? 0.62 : 0.8; // cosmetic bow styles
-  const limbM = baldy ? darkWood : look.bow === 'gold' ? mat(0xffcf33) : recurve ? mat(0x5a3418) : wood;
-  const bow = add(new THREE.TorusGeometry(R, baldy ? 0.03 : recurve ? 0.05 : 0.045, 8, 28, ARC), limbM, hand.x - R, 0, 0, aim); bow.rotation.z = -ARC / 2;
-  add(new THREE.CylinderGeometry(0.06, 0.06, 0.18, 10), baldy ? bone : look.bow === 'gold' ? mat(0xffffff) : gold, hand.x, 0, 0, aim);
-  if (baldy) { // wand-like: knobbly bone tips
-    for (const sg of [1, -1]) add(new THREE.SphereGeometry(0.05, 8, 6), bone, hand.x - R + R * Math.cos(ARC / 2), sg * R * Math.sin(ARC / 2), 0, aim);
-  } else if (look.bow === 'gold') add(new THREE.SphereGeometry(0.05, 10, 8), mat(0xe0342c), hand.x + 0.05, 0, 0, aim);
+  const limbM = look.bow === 'gold' ? mat(0xffcf33) : recurve ? mat(0x5a3418) : wood;
+  const bow = add(new THREE.TorusGeometry(R, recurve ? 0.05 : 0.045, 8, 28, ARC), limbM, hand.x - R, 0, 0, aim); bow.rotation.z = -ARC / 2;
+  add(new THREE.CylinderGeometry(0.06, 0.06, 0.18, 10), look.bow === 'gold' ? mat(0xffffff) : gold, hand.x, 0, 0, aim);
+  if (look.bow === 'gold') add(new THREE.SphereGeometry(0.05, 10, 8), mat(0xe0342c), hand.x + 0.05, 0, 0, aim);
   let tipX = hand.x - R + R * Math.cos(ARC / 2), tipY = R * Math.sin(ARC / 2);
   if (recurve) { // tips curl forward
     for (const sg of [1, -1]) add(new THREE.CylinderGeometry(0.04, 0.03, 0.2, 8), limbM, tipX + 0.06, sg * (tipY + 0.07), 0, aim).rotation.z = sg * -0.75;
@@ -125,15 +117,14 @@ function makeArcher(i, look, color, parent = scene) { // chunky big-headed carto
   }
   const stringGeo = new THREE.BufferGeometry().setFromPoints([new V(tipX, tipY, 0), new V(tipX, 0, 0), new V(tipX, -tipY, 0)]);
   aim.add(new THREE.Line(stringGeo, noOutline(new THREE.LineBasicMaterial({ color: 0xffffff }))));
-  const armB = add(new THREE.CylinderGeometry(0.085, baldy ? 0.105 : 0.075, 1, 10), sleeve, 0, 0, 0, aim);
-  const handB = add(new THREE.SphereGeometry(0.085, 10, 8), glove, 0, 0, 0, aim);
+  const armB = add(new THREE.CylinderGeometry(0.085, 0.075, 1, 10), team, 0, 0, 0, aim);
+  const handB = add(new THREE.SphereGeometry(0.085, 10, 8), leather, 0, 0, 0, aim);
   let nocked = makeArrow('normal', fletch); aim.add(nocked);
   root.rotation.y = i ? Math.PI : 0;
   root.position.set(...initialPhys().a[i]);
   parent.add(root);
-  root.userData.baldy = baldy;
   const a = {
-    root, f, fletch, baldy, aim,
+    root, f, fletch,
     pose(pitch, draw, showArrow, type) {
       aim.rotation.set(0, 0, pitch);
       if (type && nocked.userData.type !== type) { aim.remove(nocked); nocked = makeArrow(type, fletch); nocked.userData.type = type; aim.add(nocked); }
@@ -146,21 +137,6 @@ function makeArcher(i, look, color, parent = scene) { // chunky big-headed carto
   };
   a.pose(0.5, 0, true);
   return a;
-}
-function wizardBody(add, color, robe, pale) { // v6.0 'baldy mordy': bald pale toon wizard in long high-collared dark robes, no helmet
-  const robeD = robe.clone(); robeD.side = THREE.DoubleSide;
-  for (const z of [-0.12, 0.12]) add(new RoundedBoxGeometry(0.26, 0.1, 0.15, 2, 0.04), mat(0x141414), 0.06, 0.05, z); // pointy dark shoes peeking out
-  add(new THREE.CylinderGeometry(0.3, 0.46, 1.0, 18), robe, 0, 0.55, 0); // long robe to the floor
-  add(new THREE.CylinderGeometry(0.29, 0.31, 0.3, 18), robe, 0, 1.05, 0); // chest
-  add(new THREE.TorusGeometry(0.32, 0.03, 6, 22), mat(color), 0, 0.72, 0).rotation.x = Math.PI / 2; // thin team-colour sash so sides stay readable
-  add(new THREE.CylinderGeometry(0.3, 0.21, 0.26, 18, 1, true, Math.PI * 0.35, Math.PI * 1.3), robeD, 0, 1.27, 0).rotation.y = Math.PI; // high open collar behind the head
-  add(new THREE.BoxGeometry(0.03, 0.5, 0.05), mat(0x0e1712), 0.3, 0.95, 0); // robe seam
-  add(new THREE.SphereGeometry(0.3, 22, 16), pale, 0, 1.43, 0).scale.set(1, 1.08, 0.96); // smooth bald dome
-  for (const z of [-0.285, 0.285]) add(new THREE.SphereGeometry(0.06, 8, 6), pale, -0.02, 1.4, z).scale.set(0.7, 1.2, 0.6);
-  const eye = mat(0x2a2030), slit = mat(0x6d7270), lip = mat(0xb4a4a6);
-  for (const z of [-0.1, 0.1]) { add(new THREE.SphereGeometry(0.04, 8, 6), eye, 0.27, 1.46, z).scale.set(0.5, 0.75, 1.15); add(new THREE.BoxGeometry(0.02, 0.025, 0.1), mat(0xc4cac8), 0.285, 1.52, z).rotation.x = z > 0 ? -0.25 : 0.25; }
-  for (const z of [-0.028, 0.028]) add(new THREE.SphereGeometry(0.02, 6, 4), slit, 0.3, 1.37, z).scale.set(0.5, 0.45, 1.4); // flat slit nose
-  add(new THREE.BoxGeometry(0.02, 0.016, 0.13), lip, 0.282, 1.29, 0); // thin lips
 }
 // ---------- player looks (cosmetic) ----------
 const loadLook = slot => { try { return sanitizeLook(JSON.parse(localStorage.getItem(`ad3t-look-${slot}`)), slot); } catch { return sanitizeLook(null, slot); } };
@@ -205,27 +181,6 @@ function showPickup(p, pop) { // the floating power-up balloon (state lives in S
   if (pop) { flash('A power-up floats in!'); sfx.ding(); }
 }
 const fading = [];
-// v6.0: little timed animations (sparkles, cow wander, boot drop, victory ragdoll/dance). fn(t, dt) returns false when done.
-const anims = [];
-const anim = (fn, tag = 'game') => { const a = { fn, t: 0, tag }; anims.push(a); return a; };
-function tickAnims(dt) { for (let i = anims.length - 1; i >= 0; i--) { const a = anims[i]; a.t += dt; if (a.fn(a.t, dt) === false) anims.splice(i, 1); } }
-function clearAnims(tag = 'game') { for (let i = anims.length - 1; i >= 0; i--) if (anims[i].tag === tag) { const a = anims.splice(i, 1)[0]; if (a.clean) a.clean(); } }
-const starGeo = new THREE.OctahedronGeometry(1, 0);
-function sparkle(parent, pos, size = 1, tag = 'game') { // twinkly burst of little stars
-  const g = new THREE.Group(); g.position.copy(pos); parent.add(g);
-  const cs = [0xfff3a0, 0xffffff, 0x9dffb0, 0xd9a6ff], parts = [];
-  for (let k = 0; k < 18; k++) {
-    const m = new THREE.Mesh(starGeo, noOutline(new THREE.MeshBasicMaterial({ color: cs[k % 4], transparent: true, depthWrite: false })));
-    const d = new V(Math.random() - 0.5, Math.random() * 0.9 - 0.2, Math.random() - 0.5).normalize().multiplyScalar((0.6 + Math.random() * 0.8) * size);
-    m.scale.setScalar(0.05 * size); g.add(m); parts.push([m, d]);
-  }
-  const a = anim((t) => {
-    for (const [m, d] of parts) { m.position.copy(d).multiplyScalar(Math.min(1, t * 2.2) * (1 + t * 0.3)); m.rotation.y = t * 8; m.material.opacity = Math.max(0, 1 - t / 1.2); m.scale.setScalar(0.05 * size * (1 + Math.sin(t * 20 + d.x * 9) * 0.4)); }
-    if (t > 1.2) { g.removeFromParent(); return false; }
-  }, tag);
-  a.clean = () => g.removeFromParent();
-  return g;
-}
 function startMatch({ arenaId, mode, me = 0, turn = 0, st = null, wind, looks: ls = [loadLook(0), loadLook(1)], best = 1, score = [0, 0], builds = null, colors = null }) {
   const fromBuild = S.phase === 'build' || S.phase === 'pass';
   endBuildUi();
@@ -235,7 +190,6 @@ function startMatch({ arenaId, mode, me = 0, turn = 0, st = null, wind, looks: l
   stuck.length = 0;
   for (const f of fading) f.o.removeFromParent();
   fading.length = 0;
-  clearAnims(); resetVictoryPose();
   S.rand = rng((Math.random() * 2 ** 32) >>> 0); // hot-seat power-up spawns (online: the server's seeded rng)
   st = clone(st || newRound(S.rand, builds)); // every round of a series resets to the layout built at its start
   S.builds = builds;
@@ -254,10 +208,6 @@ function startMatch({ arenaId, mode, me = 0, turn = 0, st = null, wind, looks: l
   $('#homeBtn').textContent = mode === 'online' ? 'Leave room' : 'Main menu';
   camJump = true; updateHud();
   if (fromBuild) flash('Towers revealed!');
-  if (score[0] + score[1] === 0 && archers.some(a => a.baldy)) { // reveal the easter-egg wizard with a sparkle at the start of a series
-    for (const a of archers) if (a.baldy) sparkle(scene, a.root.position.clone().add(new V(0, 1.3, 0)), 1.3);
-    sfx.sparkle(); S.baldyRevealed = (S.baldyRevealed || 0) + 1;
-  }
 }
 const pickArena = () => (S.arenaChoice === 'random' ? ARENA_IDS[Math.floor(Math.random() * ARENA_IDS.length)] : S.arenaChoice);
 const quickHot = (arenaId = pickArena(), turn = 0, builds = null) => startMatch({ arenaId, mode: 'hot', wind: randomWind(), turn, best: S.seriesChoice, builds }); // a new series, no build phase
@@ -295,9 +245,6 @@ function playShot(m) {
   S.play = { arrows, ft: 0, hold: 1.0, m, run, fxi: 0, logi: 0, focus: null, chair: null, vy: new Float32Array(LAYOUT.length), puffs: 0, t0: performance.now() };
   S.phase = 'fly'; S.draw = 0; preview.visible = false;
   sfx.twang(); sfx.whoosh(Math.max(...arrows.map(a => a.res.t)) * 0.8);
-  if (m.sim.type === 'cow') sfx.moo();
-  if (m.sim.type === 'chicken') sfx.squawk();
-  S.play.squawkT = 0.45; S.play.bi = arrows.map(() => 0); S.fun = { type: m.sim.type, honks: 0, squawks: m.sim.type === 'chicken' ? 1 : 0, boot: null, cow: null };
   updateHud();
 }
 function land(a) {
@@ -305,9 +252,7 @@ function land(a) {
   const r = a.res, d = new V(...r.dir).normalize(), sp = a.m.userData.special;
   a.m.position.set(...r.pos).addScaledVector(d, sp ? -0.3 : 0.15);
   if (!sp) a.m.quaternion.setFromUnitVectors(X, d);
-  a.m.visible = r.kind !== 'out' && r.kind !== 'pickup' && sp !== 'bomb' && sp !== 'boot';
-  if (sp === 'chicken' && r.kind !== 'pickup') { sfx.honk(); a.m.rotation.set(0, a.m.rotation.y, Math.PI / 2 * archers[S.play.m.shooter].f); } // flops onto its back
-  if (sp === 'boot' && r.bootAt) giantBoot(r, S.play);
+  a.m.visible = r.kind !== 'out' && r.kind !== 'pickup' && sp !== 'bomb';
   if (r.kind === 'pickup') { // popped the balloon: the special goes to the shooter's ammo
     const k = r.pickup, UI = SPECIAL_UI[k];
     arena.puff(new V(...r.pos), 10, 0.28, undefined, 1.2, 0.4, 0.8); showPickup(null);
@@ -327,52 +272,7 @@ function land(a) {
   } else if (r.kind === 'stone') sfx.crack();
   else if (r.kind !== 'out' && !sp) sfx.thunk();
 }
-const LOG_TEXT = { ground: ['#ff8a5c', 'Fell to the ground!'], fall: ['#ffd0a0', 'Took a tumble!'], debris: ['#fff', ''], blast: ['#ff6a3a', ''], spin: ['#9ad0ff', ''], cow: ['#fff3c4', ''], boot: ['#ffb36b', ''] };
-// ---------- v6.0 fun specials: client visuals only (gameplay is in sim.js / physics.js, identical on every machine) ----------
-function giantBoot(r, P) { // a giant boot falls out of the sky onto the landing spot and stomps (the physics 'boot' event lands at the same moment)
-  const T = ARROWS.boot, at = new V(...r.bootAt), top = at.y + 22, dur = T.delay / 60, f = archers[P.m.shooter].f;
-  const g = bootModel(5.2); g.position.set(at.x - 1.6 * f, top, at.z); g.rotation.y = f > 0 ? 0 : Math.PI; g.traverse(o => { o.castShadow = true; }); scene.add(g);
-  const shadow = new THREE.Mesh(new THREE.CircleGeometry(2.6, 28), noOutline(new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthWrite: false })));
-  shadow.rotation.x = -Math.PI / 2; shadow.position.set(at.x, world.groundH(at.x, at.z) + 0.05, at.z); scene.add(shadow);
-  S.fun.boot = { pos: r.bootAt, g };
-  const a = anim(t => {
-    const u = Math.min(1, t / dur);
-    g.position.y = top - (top - at.y) * u * u; g.rotation.z = (1 - u) * 0.35 * f;
-    shadow.material.opacity = 0.45 * u; shadow.scale.setScalar(0.4 + 0.6 * u);
-    if (t > dur + 1.1) { const k = Math.min(1, (t - dur - 1.1) / 0.8); g.position.y = at.y + k * k * 20; shadow.material.opacity = 0.45 * (1 - k); } // lifts back up into the sky
-    if (t > dur + 2) { a.clean(); return false; }
-  });
-  a.clean = () => { g.removeFromParent(); shadow.removeFromParent(); };
-}
-function cowWander(P, p) { // the flattened cow shakes itself off, then wanders away and fades
-  const a0 = P.arrows[0], cow = a0 && a0.m; if (!cow || cow.userData.special !== 'cow') return;
-  cow.visible = true; if (stuck.includes(cow)) stuck.splice(stuck.indexOf(cow), 1);
-  const gy = world.groundH(p.x, p.z), start = new V(p.x, Math.max(gy, p.y - 0.4), p.z), dir = new V(0, 0, p.z > 0 ? 1 : -1).add(new V(Math.random() - 0.5, 0, 0)).normalize();
-  const inner = cow.userData.inner, mats = []; cow.traverse(o => { if (o.material && !mats.includes(o.material)) { o.material = o.material.clone(); o.material.transparent = true; mats.push(o.material); } });
-  S.fun.cow = { pos: p.toArray(), cow };
-  const a = anim((t, dt) => {
-    if (t < 0.5) { cow.position.copy(start); cow.rotation.set(0, Math.atan2(-dir.z, dir.x), 0); cow.scale.set(1.25, 0.45 + t * 1.1, 1.25); return; } // pancake, then pop back up
-    cow.scale.setScalar(1);
-    const w = t - 0.5, pos = start.clone().addScaledVector(dir, w * 1.1); pos.y = world.groundH(pos.x, pos.z) + 0.6 + Math.abs(Math.sin(w * 7)) * 0.06;
-    if (start.y > pos.y) pos.y = Math.max(pos.y, start.y - w * 6); // hop down off the rubble
-    cow.position.copy(pos); if (inner.userData.tick) inner.userData.tick(w * 0.7);
-    if (w > 1.6) for (const m of mats) m.opacity = Math.max(0, 1 - (w - 1.6) / 1.2);
-    if (w > 2.9) { a.clean(); return false; }
-  });
-  a.clean = () => cow.removeFromParent();
-}
-function flightFun(P, dt) { // squawks, honks and flops while the fun specials fly
-  const type = P.m.sim.type;
-  P.arrows.forEach((a, n) => {
-    if (a.bounces) for (; P.bi[n] < a.bounces.length && P.ft >= a.bounces[P.bi[n]].t; P.bi[n]++) { // rubber chicken bounce
-      const b = a.bounces[P.bi[n]], at = new V(...b.pos);
-      sfx.honk(); S.fun.honks++; arena.puff(at, 4, 0.25, undefined, 0.8, 0.5, 0.7); floatText('HONK!', at.clone().add(new V(0, 0.6, 0)), '#ffd84a'); shake = Math.max(shake, 0.12);
-    }
-  });
-  if (type === 'chicken' && P.arrows.some(a => !a.landed && P.ft >= a.t0) && (P.squawkT -= dt) <= 0) { P.squawkT = 0.5 + Math.random() * 0.25; sfx.squawk(); S.fun.squawks++; }
-  for (const a of P.arrows) if (a.m.userData.tick && !a.landed) a.m.userData.tick(P.ft);
-  for (const a of P.arrows) if (a.m.userData.inner && a.m.userData.inner.userData.tick && !a.landed) a.m.userData.inner.userData.tick(P.ft);
-}
+const LOG_TEXT = { ground: ['#ff8a5c', 'Fell to the ground!'], fall: ['#ffd0a0', 'Took a tumble!'], debris: ['#fff', ''], blast: ['#ff6a3a', ''], spin: ['#9ad0ff', ''] };
 function stepPhysics(P) {
   const run = P.run, target = Math.floor(P.ft / STEP + 1e-6);
   for (let n = 0; n < 8 && !run.done && run.k < target; n++) run.step(); // fixed 1/60 steps tied to playback time (slow-mo slows the stones too)
@@ -388,8 +288,6 @@ function stepPhysics(P) {
     const e = run.fx[P.fxi], p = new V(...e.p);
     if (e.kind === 'hit') { arena.chunks(p, 4, new V(...P.m.sim.arrows[0].res.dir).setY(0).normalize().multiplyScalar(0.6), arena.blockHex(e.i)); arena.puff(p, 3, 0.3); sfx.crunch(1); shake = Math.max(shake, 0.15); }
     else if (e.kind === 'blast') { arena.explode(p); sfx.boom(); shake = 1.0; flash('BOOM!'); P.focus = p; }
-    else if (e.kind === 'cow') { arena.puff(p, 16, 0.7, undefined, 2.6, 0.7, 1.6); arena.chunks(p, 10, new V(0, 2, 0)); sfx.stomp(); sfx.crumble(); shake = 0.9; flash('UDDERLY FLATTENED!'); P.focus = p; cowWander(P, p); }
-    else if (e.kind === 'boot') { arena.puff(p, 22, 0.8, undefined, 3.2, 0.5, 1.8); arena.chunks(p, 12, new V(0, 3, 0)); sfx.stomp(); shake = 1.3; flash('STOMP!'); P.focus = p; }
     else if (e.kind === 'chair') { P.chair = P.arrows[0].m; P.chair.visible = true; sfx.whir(ARROWS.wheelchair.spin + 0.3); flash('WHEEEEE!'); }
   }
   if (P.chair && run.chair) {
@@ -417,14 +315,10 @@ function updatePlay(dt) {
     if (i >= a.pts.length - 1) { land(a); continue; }
     const p0 = new V(...a.pts[i]), p1 = new V(...a.pts[i + 1]);
     a.m.position.lerpVectors(p0, p1, u - i);
-    const spc = a.m.userData.special, fs = archers[P.m.shooter].f;
-    if (spc === 'chicken') a.m.rotation.set(Math.sin(P.ft * 9) * 0.6, Math.sin(P.ft * 4) * 0.5 + (fs > 0 ? 0 : Math.PI), -P.ft * 5 * fs); // floppy cartwheel
-    else if (spc === 'cow') a.m.rotation.set(Math.sin(P.ft * 3) * 0.3, fs > 0 ? 0 : Math.PI, -P.ft * 2.2); // slow lobbed tumble, legs flailing
-    else if (spc) a.m.rotation.set(0, P.ft * 1.3, -P.ft * (spc === 'wheelchair' ? 9 : 4) * fs); // tumbling lob
+    if (a.m.userData.special) a.m.rotation.set(0, P.ft * 1.3, -P.ft * (a.m.userData.special === 'wheelchair' ? 9 : 4) * archers[P.m.shooter].f); // tumbling lob
     else a.m.quaternion.setFromUnitVectors(X, p1.sub(p0).normalize());
     a.m.visible = true;
   }
-  flightFun(P, dt);
   stepPhysics(P);
   if (P.arrows.every(a => a.landed) && P.run.done && (P.hold -= dt) <= 0) endShot();
 }
@@ -454,7 +348,7 @@ function endShot() {
   const mm = { winner: o.winner, seriesWinner: o.seriesWinner };
   if (mm.winner >= 0) S.score = [...o.score];
   if (mm.winner >= 0 && mm.seriesWinner < 0) { // round over: card, then the next round (loser shoots first; online the server sends it)
-    S.phase = 'round'; S.winner = mm.winner; S.cardT = 4.6; startVictory(mm.winner);
+    S.phase = 'round'; S.winner = mm.winner; S.cardT = 2.4;
     $('#roundCard b').textContent = S.mode === 'online' && mm.winner === S.me ? 'Round to you!' : `Round to ${nameOf(mm.winner)}!`;
     $('#roundCard span').textContent = `${S.score[0]} - ${S.score[1]}`; $('#roundCard').style.borderColor = css(cols[mm.winner]);
     show('#roundCard', true); sfx.ding();
@@ -467,9 +361,7 @@ function endShot() {
     $('#overScore').textContent = series ? `${nameOf(0)} ${S.score[0]} - ${S.score[1]} ${nameOf(1)}` : '';
     $('#rematch').textContent = series ? 'Rematch series' : 'Rematch';
     $('#overTitle').textContent = series ? 'Series over' : 'Match over';
-    $('#overMsg').textContent = ''; $('#rematch').disabled = false; show('#menu', false);
-    const v = startVictory(w); // v6.0: let the ragdoll + dance play before the results panel
-    setTimeout(() => { if (S.phase === 'over' && S.victory === v) { openPanel('#over'); sfx.fanfare(); } }, window.__fastOver ? 0 : OVER_DELAY);
+    $('#overMsg').textContent = ''; $('#rematch').disabled = false; show('#menu', false); openPanel('#over'); sfx.fanfare();
   } else {
     S.phase = 'aim';
     archers[S.turn].pose(0.5, 0, true, S.types[S.turn]);
@@ -840,7 +732,6 @@ function enterBuild(m) {
   stuck.length = 0;
   for (const f of fading) f.o.removeFromParent();
   fading.length = 0;
-  clearAnims(); resetVictoryPose();
   const st = newRound(Math.random), hot = m.mode === 'hot';
   Object.assign(S, { mode: m.mode, me: m.me || 0, turn: m.turn || 0, hp: [...st.hp], st, wind: { x: 0, z: 0 }, arenaId: m.arenaId, phase: hot ? 'pass' : 'build', winner: -1, play: null, queue: [], focus: null, draw: 0,
     best: m.best || 1, score: [...(m.score || [0, 0])], seriesWinner: -1, pending: null, cardT: 0, builds: null });
@@ -1049,7 +940,6 @@ function updateHud() {
     b.classList.toggle('hidden', n <= 0); b.querySelector('em').textContent = `×${n}`; specials += n > 0;
   });
   $('#types').classList.toggle('many', specials > 0);
-  const nBtn = document.querySelectorAll('#types button:not(.hidden)').length; $('#types').classList.toggle('lots', nBtn > 5); $('#types').style.setProperty('--n', nBtn);
   $('#hint').textContent = CAM.on ? 'Drag to look around · pinch or wheel to zoom' : S.phase === 'aim' && S.draw === 0 ? (mine ? 'Drag ↑↓ angle · ←→ power · release to shoot' : 'Opponent is aiming…') : '';
   $('#muteBtn').textContent = `Sound: ${sfx.isMuted() ? 'off' : 'on'}`;
 }
@@ -1060,7 +950,6 @@ let camJump = true;
 function camTarget(t) {
   if (S.phase === 'menu') { const a = t * 0.06 + 1.2; return [new V(Math.cos(a) * 30, 17, Math.sin(a) * 30), new V(0, 4, 0)]; }
   if (S.phase === 'build' || S.phase === 'pass') return buildCam();
-  if (S.victory && !S.play && ['round', 'over'].includes(S.phase)) return victoryCam(t);
   const v = viewer(), fv = archers[v].f;
   let lead = S.play ? playLead() : null, focus = lead ? lead.m.getWorldPosition(new V()) : S.phase === 'over' ? S.focus : null;
   if (S.play && S.play.focus) focus = S.play.focus;
@@ -1133,7 +1022,6 @@ function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
   time += dt;
   if (S.play) updatePlay(dt);
-  tickAnims(dt);
   if (pickupObj) { const u = pickupObj.userData; u.tick(time); if (u.pop < 1) { u.pop = Math.min(1, u.pop + dt * 2.5); pickupObj.scale.setScalar(PICKUP_SCALE * Math.max(0.01, Math.sin(u.pop * Math.PI * 0.75) / Math.sin(Math.PI * 0.75))); } }
   for (let i = fading.length - 1; i >= 0; i--) { const f = fading[i]; f.t -= dt * 0.7; f.o.scale.setScalar(Math.max(0.01, f.t)); if (f.t <= 0) { f.o.removeFromParent(); fading.splice(i, 1); } }
   fpsN++; if (time - fpsT0 >= 1) { S.fps = fpsN / (time - fpsT0); fpsN = 0; fpsT0 = time; }
@@ -1223,14 +1111,7 @@ document.querySelectorAll('.cyc').forEach(c => c.querySelectorAll('button').forE
   const list = pickers[k], i = list.findIndex(x => x[0] === cLook[k]);
   setLook({ [k]: list[(i + d + list.length) % list.length][0] });
 }));
-$('#nameIn').oninput = () => {
-  const was = isBaldy(cLook), n = cleanName($('#nameIn').value, '');
-  cLook = sanitizeLook({ ...cLook, name: n || ['Blue', 'Red'][cSlot] }, cSlot); saveLook(cSlot, cLook);
-  if (isBaldy(cLook) !== was) { // v6.0: live easter-egg swap in the preview
-    renderCustom();
-    if (isBaldy(cLook)) { sparkle(pvScene, new V(0, 1.1, 0), 1.1, 'pv'); sfx.sparkle(); S.pvSparkles = (S.pvSparkles || 0) + 1; }
-  }
-};
+$('#nameIn').oninput = () => { const n = cleanName($('#nameIn').value, ''); cLook = sanitizeLook({ ...cLook, name: n || ['Blue', 'Red'][cSlot] }, cSlot); saveLook(cSlot, cLook); };
 $('#nameIn').onblur = () => { $('#nameIn').value = cLook.name; };
 document.querySelectorAll('#custom .tabs button').forEach(b => b.onclick = () => { cSlot = +b.dataset.slot; cLook = loadLook(cSlot); $('#nameIn').value = cLook.name; renderCustom(); });
 $('#customBtn').onclick = () => { sfx.unlock(); show('#home', false); openPanel('#custom'); cLook = loadLook(cSlot); $('#nameIn').value = cLook.name; renderCustom(); };
@@ -1316,11 +1197,6 @@ window.__game = {
     return null;
   },
   setPickup(p) { if (S.mode !== 'hot') return false; S.st.pickup = p; showPickup(p, true); return true; }, // hot-seat test helper
-  // v6.0 hooks
-  fun: () => ({ ...(S.fun || {}), boot: S.fun && S.fun.boot ? S.fun.boot.pos : null, cow: S.fun && S.fun.cow ? S.fun.cow.pos : null, sounds: { ...sfx.played } }),
-  victory: () => S.victory ? { w: S.victory.w, l: S.victory.l, dance: S.victory.dance, t: S.victory.t, landed: S.victory.landed, lp: archers[S.victory.l].root.position.toArray(), lrot: archers[S.victory.l].root.rotation.z, wp: archers[S.victory.w].root.position.toArray(), wrot: archers[S.victory.w].root.rotation.toArray().slice(0, 3) } : null,
-  baldy: () => ({ archers: archers.map(a => a.baldy), preview: pvArcher ? pvArcher.baldy : null, pvSparkles: S.pvSparkles || 0, revealed: S.baldyRevealed || 0, names: looks.map(l => l.name) }),
-  setHp(i, hp) { if (S.mode !== 'hot') return false; S.st.hp[i] = hp; S.hp[i] = hp; updateHud(); return true; },
   giveAmmo(k, n = 1, who = S.turn) { if (S.mode !== 'hot') return false; S.st.ammo[who][k] += n; updateHud(); return true; },
   findHit(type = 'normal') { // search for a body hit with the current wind
     for (const pd of [35, 25, 45, 55, 15]) for (let pw = 0.4; pw <= 1; pw += 0.002) {
@@ -1332,46 +1208,3 @@ window.__game = {
   shootAim(aim, type = 'normal') { if (!myTurn()) return false; S.types[S.turn] = type; S.aim = aim; S.draw = 1; fire(); return true; },
 };
 window.__ready = true;
-// ---------- v6.0 victory show (visual only): the loser ragdolls off in slow-mo, the winner dances on the rubble ----------
-const OVER_DELAY = 3400, DANCES = ['wiggle', 'spin', 'pump'];
-function startVictory(w) {
-  resetVictoryPose();
-  const l = 1 - w, W = archers[w], L = archers[l], dance = DANCES[(S.score[0] + S.score[1] + w + (S.danceSeed || 0)) % 3];
-  S.danceSeed = (S.danceSeed || 0) + 1;
-  const v = S.victory = { w, l, dance, t: 0, w0: W.root.position.clone(), l0: L.root.position.clone(), wy: W.root.rotation.y, ly: L.root.rotation.y, landed: false, poses: [] };
-  const away = new V(L.root.position.x - W.root.position.x, 0, L.root.position.z - W.root.position.z); away.y = 0;
-  v.away = away.lengthSq() > 1e-4 ? away.normalize() : new V(-W.f, 0, 0);
-  for (const A of [W, L]) A.root.rotation.order = 'YXZ';
-  L.pose(0.3, 0, false); W.pose(0.6, 0, false);
-  sfx.trombone(); setTimeout(() => { if (S.victory === v) sfx.jingle(); }, 900);
-  anim((t) => {
-    if (S.victory !== v || !['round', 'over'].includes(S.phase)) return false;
-    v.t = t;
-    // loser: slow-motion tumble backwards off the tower, limbs flopping, then lies flat on the ground
-    const u = Math.min(t, 3.2) * 0.42, gy = world.groundH(L.root.position.x, L.root.position.z);
-    if (!v.landed) {
-      const p = v.l0.clone().addScaledVector(v.away, 2.2 * u); p.y = v.l0.y + 2.6 * u - 4.9 * u * u;
-      if (p.y <= gy && u > 0.2) { p.y = gy; v.landed = true; v.landT = t; }
-      L.root.position.copy(p); L.root.rotation.set(Math.sin(t * 3) * 0.25, v.ly, Math.min(Math.PI / 2, t * 1.4) + Math.sin(t * 2) * 0.15 * (v.landed ? 0 : 1));
-    } else { const k = t - v.landT; L.root.rotation.set(0, v.ly, Math.PI / 2 + 0.08 * Math.sin(k * 6) * Math.exp(-k * 2)); L.root.position.y = gy + 0.32 + Math.abs(Math.sin(k * 7)) * 0.2 * Math.exp(-k * 3); }
-    L.aim.rotation.z = Math.sin(t * 5) * 0.9; // floppy bow arm
-    // winner: little dance on the rubble
-    const r = W.root;
-    if (v.dance === 'wiggle') { r.rotation.set(0, v.wy + Math.sin(t * 5) * 0.3, Math.sin(t * 10) * 0.22); r.position.y = v.w0.y + Math.abs(Math.sin(t * 10)) * 0.12; W.aim.rotation.z = 0.4 + Math.sin(t * 10) * 0.6; }
-    else if (v.dance === 'spin') { r.rotation.set(0, v.wy + t * 7, 0); r.position.y = v.w0.y + Math.abs(Math.sin(t * 7)) * 0.32; W.aim.rotation.z = 1.2; }
-    else { r.rotation.set(0, v.wy, Math.sin(t * 6) * 0.08); r.position.y = v.w0.y + Math.max(0, Math.sin(t * 12)) * 0.28; W.aim.rotation.z = 1.25 + Math.sin(t * 12) * 0.55; }
-    if (t > 1.2 && Math.random() < 0.06) sparkle(scene, r.position.clone().add(new V(0, 2.2, 0)), 0.6);
-  });
-  return v;
-}
-function resetVictoryPose() { // back to upright, facing each other
-  const v = S.victory; S.victory = null;
-  if (!v) return;
-  for (const A of archers) { A.root.rotation.order = 'XYZ'; A.pose(0.5, 0, true); }
-  placeArchers(S.st.phys.a);
-}
-function victoryCam(t) { // first the loser's tumble, then the winner's dance
-  const v = S.victory, W = archers[v.w], L = archers[v.l], por = camera.aspect < 0.9 ? 1.45 : 1;
-  if (v.t < 2.1) { const p = L.root.position.clone(); p.y = Math.max(p.y, 1.2); return [p.clone().add(new V(v.away.x * 3 - 2 * L.f * por, 2.6 * por, 7.5 * por)), p.clone().add(new V(0, 0.6, 0))]; }
-  const p = W.root.position.clone(); return [p.clone().add(new V(W.f * 3.6 * por, 1.9 * por, 3.4 * por)), p.clone().add(new V(0, 1.0, 0))];
-}
