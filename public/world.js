@@ -1,7 +1,8 @@
 // Cartoon castle arena: toon-shaded valley, winding river, stacked-block physics towers, toy castles, tents, trebuchet, clouds, weather.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { LAYOUT, parked } from './sim.js';
+import { LAYOUT, parked, BUILD_SLOT0, BUILD_MAX } from './sim.js';
+import { BLOCK_COLORS, DEFAULT_BLOCK, hexOf } from './looks.js';
 
 // ---------- toon helpers (shared with game.js) ----------
 const grad = (() => { const t = new THREE.DataTexture(new Uint8Array([110, 175, 230, 255]), 4, 1, THREE.RedFormat); t.minFilter = t.magFilter = THREE.NearestFilter; t.needsUpdate = true; return t; })();
@@ -23,6 +24,15 @@ const stoneTex = () => canvasTex('stone', 256, 256, (g, w, h) => {
     const l = 205 + Math.random() * 40; g.fillStyle = `rgb(${l},${l},${l + 6})`;
     rrect(g, k * 128 + (r % 2) * 64 + 5, r * 64 + 5, 118, 54, 14);
   }
+});
+// v5.3 build blocks: near-white face with a soft bevel (light top-left, dark bottom-right edge) and a few chips, tinted by the block colour
+const blockTex = () => canvasTex('block', 128, 128, (g, w, h) => {
+  g.fillStyle = '#8f8f96'; g.fillRect(0, 0, w, h);
+  g.fillStyle = '#c9c9cf'; g.fillRect(4, 4, w - 8, h - 8);
+  g.fillStyle = '#fbfbfd'; g.fillRect(4, 4, w - 14, h - 14);
+  g.fillStyle = '#ececf0'; g.fillRect(12, 12, w - 24, h - 24);
+  for (let k = 0; k < 9; k++) { const l = 205 + Math.random() * 25; g.fillStyle = `rgb(${l},${l},${l + 4})`; g.beginPath(); g.arc(18 + Math.random() * (w - 36), 18 + Math.random() * (h - 36), 2 + Math.random() * 4, 0, 7); g.fill(); }
+  g.strokeStyle = '#d4d4da'; g.lineWidth = 2; g.beginPath(); g.moveTo(30, 40); g.lineTo(44, 50); g.lineTo(52, 46); g.stroke();
 });
 const brickTex = () => canvasTex('brick', 256, 256, (g, w, h) => {
   g.fillStyle = '#7a2a22'; g.fillRect(0, 0, w, h); g.strokeStyle = '#5a1c16'; g.lineWidth = 3;
@@ -116,7 +126,7 @@ export function buildArena(scene, world, lights) {
   const shade = (base, k) => new THREE.Color(base).multiplyScalar(0.86 + ((k * 37) % 11) / 11 * 0.16);
   const kindCol = { wall: T.stone === 0xffffff ? 0xc9ccd6 : new THREE.Color(T.stone).multiplyScalar(0.85).getHex(), slab: 0xb59a76, merlon: 0xdfe2ea, build: 0xe2a95a }; // build-phase blocks: warm sandstone, easy to tell apart
   const blocks = LAYOUT.map((l, i) => {
-    const m = add(blockGeo(l.half), toon(shade(kindCol[l.kind], i)), ...l.pos);
+    const m = add(blockGeo(l.half), toon(shade(kindCol[l.kind], i), l.kind === 'build' ? { map: blockTex() } : {}), ...l.pos);
     if (T.snow && l.kind !== 'wall') add(new RoundedBoxGeometry(l.half[0] * 2 + 0.06, 0.1, l.half[2] * 2 + 0.06, 1, 0.04), snowM, 0, l.half[1] + 0.03, 0, m);
     if (l.kind === 'wall' && l.pos[1] < 0.5 && Math.abs(l.pos[2]) < 0.1 && Math.sign(l.pos[0]) * (l.pos[0] - (l.s ? 15 : -15)) > 0) // door on the back face
       add(new THREE.BoxGeometry(0.06, 0.8, 0.7), toon(0x3a2a1a), Math.sign(l.pos[0]) * (l.half[0] + 0.02), -0.05, 0, m);
@@ -125,18 +135,33 @@ export function buildArena(scene, world, lights) {
       const flame = add(new THREE.ConeGeometry(0.13, 0.34, 7), noOutline(new THREE.MeshBasicMaterial({ color: 0xffb030 })), 0, 1.1, 0, m);
       torches.push({ flame, ph: Math.random() * 9 });
     }
-    if (l.kind === 'build') m.visible = false;
+    if (l.kind === 'build') { m.visible = false; m.userData.col = DEFAULT_BLOCK; m.material.color.copy(shade(hexOf(BLOCK_COLORS, DEFAULT_BLOCK), i)); }
     return m;
   });
   function setBlocks(b) { b.forEach((q, i) => { blocks[i].position.set(q[0], q[1], q[2]); blocks[i].quaternion.set(q[3], q[4], q[5], q[6]); blocks[i].visible = !parked(q); }); } // unplaced build blocks stay hidden
+  function setBuildColors(cs) { // cs[s] = colour id per placed block of side s (null/missing = sandstone)
+    for (const s of [0, 1]) for (let n = 0; n < BUILD_MAX; n++) {
+      const i = BUILD_SLOT0[s] + n, id = (cs && cs[s] && cs[s][n]) || DEFAULT_BLOCK, m = blocks[i];
+      if (m.userData.col !== id) { m.userData.col = id; m.material.color.copy(shade(hexOf(BLOCK_COLORS, id), i)); }
+    }
+  }
+  const blockHex = i => (i >= 0 && LAYOUT[i] && LAYOUT[i].kind === 'build' ? hexOf(BLOCK_COLORS, blocks[i].userData.col) : null);
+  function nearestHex(pos, r = 2) { // colour of the closest visible block (blast debris)
+    let best = -1, d = r * r;
+    blocks.forEach((m, i) => { if (m.visible) { const q = m.position.distanceToSquared(pos); if (q < d) { d = q; best = i; } } });
+    return blockHex(best);
+  }
   // ---------- effects: chunks, dust, explosions, sparks ----------
   const debris = [], fx = [];
   const chunkGeo = new RoundedBoxGeometry(0.2, 0.16, 0.18, 1, 0.04), puffGeo = new THREE.IcosahedronGeometry(1, 1);
   const dustM = noOutline(toon(T.snow ? 0xffffff : 0xd8c8a8, { transparent: true, opacity: 0.85 })), smokeM = noOutline(toon(0x6a6670, { transparent: true, opacity: 0.9 }));
   const fireM = noOutline(new THREE.MeshBasicMaterial({ color: 0xffc14a, transparent: true, opacity: 1, depthWrite: false })), sparkM = noOutline(new THREE.MeshBasicMaterial({ color: 0xffe066 }));
-  function chunks(pos, n, out) {
+  const chunkMs = {};
+  const chunkM = hex => (hex == null ? crackM : chunkMs[hex] || (chunkMs[hex] = toon(new THREE.Color(hex).multiplyScalar(0.8), { map: blockTex() })));
+  function chunks(pos, n, out, hex = null) { // hex: the hit block's colour (classic stone if null)
+    const mat = chunkM(hex);
     for (let k = 0; k < n; k++) {
-      const c = add(chunkGeo, crackM, pos.x, pos.y, pos.z); c.scale.setScalar(0.6 + Math.random() * 0.8);
+      const c = add(chunkGeo, mat, pos.x, pos.y, pos.z); c.scale.setScalar(0.6 + Math.random() * 0.8);
       debris.push({ o: c, v: out.clone().multiplyScalar(1 + Math.random() * 2).add(new THREE.Vector3((Math.random() - 0.5) * 2, 2 + Math.random() * 2, (Math.random() - 0.5) * 2)), spin: Math.random() * 8, life: 6 });
     }
   }
@@ -152,8 +177,9 @@ export function buildArena(scene, world, lights) {
     fx.push({ o: fl, t: 0, life: 0.45, grow: 9, v: new THREE.Vector3() });
     puff(pos, 8, 0.7, noOutline(new THREE.MeshBasicMaterial({ color: 0xff7a1a, transparent: true, depthWrite: false })), 1.2, 1.5, 0.55);
     puff(pos, 14, 0.8, smokeM, 2.2, 1.6, 2.2);
-    chunks(pos, 16, new THREE.Vector3(0, 2, 0));
-    for (let k = 0; k < 16; k++) { const d = new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.8, Math.random() - 0.5).normalize(); chunks(pos.clone().addScaledVector(d, 0.4), 1, d.multiplyScalar(4)); }
+    const hex = nearestHex(pos);
+    chunks(pos, 16, new THREE.Vector3(0, 2, 0), hex);
+    for (let k = 0; k < 16; k++) { const d = new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.8, Math.random() - 0.5).normalize(); chunks(pos.clone().addScaledVector(d, 0.4), 1, d.multiplyScalar(4), hex); }
   }
   const sparkGeo = new THREE.BoxGeometry(0.05, 0.05, 0.22);
   function sparks(pos, n = 4) {
@@ -236,7 +262,7 @@ export function buildArena(scene, world, lights) {
   return {
     fadeTrees,
     setTeamColors(cols) { cols.forEach((c, s) => { teamFlag[s].color.setHex(c); teamRoof[s].color.setHex(c); }); },
-    setBlocks, blockMesh: i => blocks[i], blocks, chunks, puff, explode, sparks, group,
+    setBlocks, setBuildColors, blockHex, blockMesh: i => blocks[i], blocks, chunks, puff, explode, sparks, group,
     resetBlocks(b) {
       for (const d of debris) d.o.removeFromParent();
       for (const f of fx) f.o.removeFromParent();

@@ -4,7 +4,7 @@ const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
 
-const BUILD = 'ad3t-v5.2';
+const BUILD = 'ad3t-v5.3';
 const app = express();
 app.get('/health', (req, res) => res.json({ ok: true, build: BUILD, rooms: rooms.size }));
 const fs = require('fs');
@@ -26,7 +26,7 @@ Promise.all([import('./public/sim.js'), import('./public/looks.js'), import('./p
     clearTimeout(r.timer);
     r.rand = sim.rng(Math.floor(Math.random() * 2 ** 32)); // seeded per round: power-up timing / position / kind
     Object.assign(r, { phase: 'play', st: sim.newRound(r.rand, r.builds), winner: -1, wind: sim.randomWind(), votes: new Set(), busy: 0 }); // every round resets to the built layout
-    r.socks.forEach((s, i) => s.emit('start', { arena: r.arena, you: i, st: r.st, turn: r.turn, wind: r.wind, looks: r.looks, best: r.best, score: r.score }));
+    r.socks.forEach((s, i) => s.emit('start', { arena: r.arena, you: i, st: r.st, turn: r.turn, wind: r.wind, looks: r.looks, best: r.best, score: r.score, colors: r.builds ? r.builds.map(b => b && b.colors) : null }));
   };
   // build phase (once per series): both players build privately; the server validates + stores each plan, reveals both at the start
   const LEGACY = process.env.LEGACY_TOWERS === '1'; // test-only: lets the regression suites keep the classic towers

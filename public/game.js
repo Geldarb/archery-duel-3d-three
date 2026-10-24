@@ -6,7 +6,7 @@ import { HP, ARROWS, ARENA_IDS, SHOULDER, SPECIALS, LAYOUT, BUILD_MAX, CELL, BUI
 import { PhysRun, shotEvents, STEP } from './physics.js';
 import { SPECIAL_UI, pickupModel } from './specials.js';
 import { buildArena, heraldry, toon, noOutline } from './world.js';
-import { PALETTE, FLETCH, HELMETS, EMBLEMS, BOWS, TAUNTS, sanitizeLook, teamColors, hexOf, cleanName } from './looks.js';
+import { PALETTE, FLETCH, HELMETS, EMBLEMS, BOWS, TAUNTS, BLOCK_COLORS, DEFAULT_BLOCK, isBlockColor, sanitizeLook, teamColors, hexOf, cleanName } from './looks.js';
 import * as sfx from './audio.js';
 
 const V = THREE.Vector3, X = new V(1, 0, 0), $ = s => document.querySelector(s), DEG = Math.PI / 180;
@@ -181,7 +181,7 @@ function showPickup(p, pop) { // the floating power-up balloon (state lives in S
   if (pop) { flash('A power-up floats in!'); sfx.ding(); }
 }
 const fading = [];
-function startMatch({ arenaId, mode, me = 0, turn = 0, st = null, wind, looks: ls = [loadLook(0), loadLook(1)], best = 1, score = [0, 0], builds = null }) {
+function startMatch({ arenaId, mode, me = 0, turn = 0, st = null, wind, looks: ls = [loadLook(0), loadLook(1)], best = 1, score = [0, 0], builds = null, colors = null }) {
   const fromBuild = S.phase === 'build' || S.phase === 'pass';
   endBuildUi();
   setLooks(ls);
@@ -193,7 +193,8 @@ function startMatch({ arenaId, mode, me = 0, turn = 0, st = null, wind, looks: l
   S.rand = rng((Math.random() * 2 ** 32) >>> 0); // hot-seat power-up spawns (online: the server's seeded rng)
   st = clone(st || newRound(S.rand, builds)); // every round of a series resets to the layout built at its start
   S.builds = builds;
-  arena.resetBlocks(st.phys.b); placeArchers(st.phys.a); pickupKey = '-'; showPickup(st.pickup, false);
+  S.colors = colors || (builds ? builds.map(b => (b && b.colors) || null) : null); // v5.3: per-block colours (online: from the server each round)
+  arena.setBuildColors(S.colors); arena.resetBlocks(st.phys.b); placeArchers(st.phys.a); pickupKey = '-'; showPickup(st.pickup, false);
   for (const i of [0, 1]) if (ARROWS[S.types[i]].special) S.types[i] = 'normal';
   Object.assign(S, { mode, me, turn, hp: [...st.hp], st, wind, arenaId, phase: 'aim', winner: -1, play: null, queue: [], focus: null, draw: 0, best, score: [...score], seriesWinner: -1, pending: null, cardT: 0 });
   show('#roundCard', false);
@@ -283,7 +284,7 @@ function stepPhysics(P) {
   faceArchers(archers.map(x => x.root.position.toArray()));
   for (; P.fxi < run.fx.length; P.fxi++) {
     const e = run.fx[P.fxi], p = new V(...e.p);
-    if (e.kind === 'hit') { arena.chunks(p, 4, new V(...P.m.sim.arrows[0].res.dir).setY(0).normalize().multiplyScalar(0.6)); arena.puff(p, 3, 0.3); sfx.crunch(1); shake = Math.max(shake, 0.15); }
+    if (e.kind === 'hit') { arena.chunks(p, 4, new V(...P.m.sim.arrows[0].res.dir).setY(0).normalize().multiplyScalar(0.6), arena.blockHex(e.i)); arena.puff(p, 3, 0.3); sfx.crunch(1); shake = Math.max(shake, 0.15); }
     else if (e.kind === 'blast') { arena.explode(p); sfx.boom(); shake = 1.0; flash('BOOM!'); P.focus = p; }
     else if (e.kind === 'chair') { P.chair = P.arrows[0].m; P.chair.visible = true; sfx.whir(ARROWS.wheelchair.spin + 0.3); flash('WHEEEEE!'); }
   }
@@ -551,9 +552,9 @@ function net() {
     show('#home', false); openPanel('#lobby');
   });
   sock.on('joinError', msg => { show('#lobby', false); show('#home', true); $('#homeMsg').textContent = autoJoin ? `Couldn't join room ${autoJoin}: ${msg}.` : msg; autoJoin = null; });
-  sock.on('start', ({ arena: id, you, st, turn, wind, looks: ls, best, score }) => {
+  sock.on('start', ({ arena: id, you, st, turn, wind, looks: ls, best, score, colors }) => {
     autoJoin = null;
-    const m = { arenaId: id, mode: 'online', me: you, st, turn, wind, looks: ls, best, score };
+    const m = { arenaId: id, mode: 'online', me: you, st, turn, wind, looks: ls, best, score, colors };
     if (S.mode === 'online' && (S.play || S.cardT > 0)) S.pending = m; else startMatch(m); // let the last shot and round card finish first
   });
   sock.on('build', m => { autoJoin = null; enterBuild({ arenaId: m.arena, mode: 'online', me: m.you, turn: m.turn, looks: m.looks, best: m.best, score: m.score, time: m.time }); });
@@ -585,9 +586,10 @@ buildGrid.material.transparent = true; buildGrid.material.opacity = 0.55; buildG
 const colHeight = (plan, gx, gz) => plan.blocks.reduce((n, c) => n + (c[0] === gx && c[1] === gz ? 1 : 0), 0);
 function withBlock(s, plan, cell) { // add a block on top of that column; if it lands under the archer, the archer climbs on top of it
   const c = [cell[0], cell[1], colHeight(plan, cell[0], cell[1])], before = BS.res[s] && BS.res[s].ok ? BS.res[s].archer[1] : 0;
-  let next = { blocks: [...plan.blocks, c], archer: plan.archer }, r = validateBuild(s, next), climbed = false;
+  const colors = [...(plan.colors || plan.blocks.map(() => DEFAULT_BLOCK)), BS.color || DEFAULT_BLOCK]; // v5.3: the selected colour goes on the new block
+  let next = { blocks: [...plan.blocks, c], colors, archer: plan.archer }, r = validateBuild(s, next), climbed = false;
   if ((!r.ok && r.at < 0) || (r.ok && r.archer[1] > before + 1e-6)) { // the archer's spot rose (or became unstable): step onto the new block's centre
-    const up = { blocks: next.blocks, archer: [2 * c[0] + 1, 2 * c[1] + 1] }, r2 = validateBuild(s, up);
+    const up = { blocks: next.blocks, colors, archer: [2 * c[0] + 1, 2 * c[1] + 1] }, r2 = validateBuild(s, up);
     if (r2.ok) { next = up; r = r2; climbed = true; }
   }
   return { next, r, climbed };
@@ -604,7 +606,7 @@ function enterBuild(m) {
     best: m.best || 1, score: [...(m.score || [0, 0])], seriesWinner: -1, pending: null, cardT: 0, builds: null });
   pickupKey = '-'; showPickup(null, false);
   Object.assign(BS, { side: hot ? 0 : S.me, tool: 'block', plans: [defaultPlan(), defaultPlan()], hist: [[], []], ghost: null, yaw: 0, online: !hot, ends: performance.now() + (m.time || BUILD_TIME) * 1000,
-    locked: false, sent: false, oppReady: false, m, msg: '', err: false, secs: -1 });
+    locked: false, sent: false, oppReady: false, m, msg: '', err: false, secs: -1, color: towerColor(hot ? 0 : S.me) });
   BS.res = [0, 1].map(i => validateBuild(i, BS.plans[i]));
   archers.forEach((a, i) => a.pose(0.5, 0, true, 'normal'));
   ['#home', '#lobby', '#over', '#menu', '#notice', '#help', '#custom', '#hud', '#bottom', '#pip', '#roundCard', '#aimTip'].forEach(x => show(x, false));
@@ -616,6 +618,7 @@ function enterBuild(m) {
   renderBuild();
   if (window.__game.autoSkip || window.__autoSkip) setTimeout(legacySkip, 0); // regression suites: the classic towers, no building
 }
+function towerColor(s) { const c = looks[s] && looks[s].tower; return isBlockColor(c) ? c : DEFAULT_BLOCK; } // starting colour = the player's Customise default
 function legacySkip() {
   if (S.phase !== 'pass' && S.phase !== 'build') return;
   if (!BS.online) return quickHot(S.arenaId, BS.m.turn);
@@ -634,15 +637,15 @@ function showPass(k) { // hot-seat privacy card: the player who isn't building l
 }
 const HINT = 'Tap the grid to place · tap again to stack';
 $('#passGo').onclick = () => { // hot-seat: this player's 60 s starts now
-  show('#pass', false); S.phase = 'build'; BS.yaw = 0; BS.tool = 'block'; BS.ends = performance.now() + BUILD_TIME * 1000; BS.secs = -1; camJump = true;
+  show('#pass', false); S.phase = 'build'; BS.yaw = 0; BS.tool = 'block'; BS.color = towerColor(BS.side); BS.ends = performance.now() + BUILD_TIME * 1000; BS.secs = -1; camJump = true;
   show('#build', true); buildMsg(HINT); renderBuild();
 };
-const autoRes = s => validateBuild(s, autoPlan(s));
+const autoRes = s => validateBuild(s, autoPlan(s, towerColor(s))); // auto / quick-play towers use each player's tower colour
 $('#passSkip').onclick = () => quickHot(S.arenaId, BS.m.turn, [autoRes(0), autoRes(1)]); // quick play: both get the ready-made 30-block tower
 function buildMsg(t, err = false) { BS.msg = t; BS.err = err; const el = $('#bMsg'); el.textContent = t; el.classList.toggle('err', err); }
 function renderBuild() { // 3D: your own build (the other side stays hidden until the match starts)
   const s = BS.side, vis = [0, 1].map(i => (i === s && S.phase === 'build' ? BS.res[i] : EMPTY[i])), ph = initialPhys(vis); // the other side stays bare ground
-  arena.resetBlocks(ph.b); placeArchers(ph.a);
+  arena.setBuildColors(vis.map(r => (r && r.colors) || null)); arena.resetBlocks(ph.b); placeArchers(ph.a);
   const g = BS.ghost;
   ghost.visible = !!(g && g.pos && S.phase === 'build');
   if (ghost.visible) { ghost.position.set(...g.pos); ghost.material = g.ok ? ghostMats.ok : ghostMats.bad; }
@@ -661,6 +664,7 @@ function renderBuildUi() {
   document.querySelectorAll('#bTool button').forEach(b => { b.classList.toggle('on', b.dataset.tool === BS.tool); b.disabled = lock; });
   $('#bReady').textContent = BS.online ? (lock ? 'Waiting…' : 'Ready') : s ? 'Fight!' : 'Done';
   $('#bReady').disabled = lock; $('#bSkip').disabled = lock;
+  document.querySelectorAll('#bColors button').forEach(b => { b.classList.toggle('on', b.dataset.c === BS.color); b.setAttribute('aria-checked', b.dataset.c === BS.color); b.disabled = lock; });
   $('#bOpp').textContent = BS.online ? (BS.oppReady ? 'Opponent ready ✓' : 'Opponent building…') : '';
   show('#bOpp', BS.online);
   if (lock && BS.online) buildMsg(BS.oppReady ? 'Starting…' : 'Locked in. Waiting for your opponent…');
@@ -684,7 +688,7 @@ function buildTry(cell) {
 function buildArcherTry(spot) {
   const s = BS.side, plan = BS.plans[s];
   if (S.phase !== 'build' || BS.locked || BS.sent) return false;
-  const next = { blocks: plan.blocks, archer: spot }, r = validateBuild(s, next);
+  const next = { ...plan, archer: spot }, r = validateBuild(s, next);
   if (!r.ok) { buildMsg(r.err, true); return false; }
   setPlan(next, r); buildMsg('Archer moved'); return true;
 }
@@ -745,10 +749,16 @@ document.querySelectorAll('#bTool button').forEach(b => b.onclick = () => {
   BS.tool = b.dataset.tool; BS.ghost = null;
   buildMsg(BS.tool === 'archer' ? 'Tap the ground or a block top to move your archer' : HINT); renderBuild();
 });
+$('#bColors').innerHTML = BLOCK_COLORS.map(c => `<button data-c="${c.id}" role="radio" aria-label="${c.name} blocks" title="${c.name}" style="background-color:${css(c.hex)}"></button>`).join('');
+function pickColor(id) { // v5.3: colour for the next blocks you place (blocks already placed keep theirs)
+  if (S.phase !== 'build' || BS.locked || BS.sent || !isBlockColor(id)) return false;
+  BS.color = id; buildMsg(`${BLOCK_COLORS.find(c => c.id === id).name} blocks`); renderBuildUi(); return true;
+}
+$('#bColors').onclick = e => { const b = e.target.closest('button'); if (b) pickColor(b.dataset.c); };
 $('#bConfirm').onclick = () => { if (BS.ghost && BS.ghost.ok) buildTry(BS.ghost.cell); };
 $('#bRot').onclick = () => { BS.yaw += Math.PI / 2; };
 function finishHotBuild(auto) {
-  if (auto) { BS.plans[BS.side] = autoPlan(BS.side); BS.res[BS.side] = autoRes(BS.side); }
+  if (auto) { BS.plans[BS.side] = autoPlan(BS.side, towerColor(BS.side)); BS.res[BS.side] = autoRes(BS.side); }
   if (BS.side === 0) return showPass(1);
   quickHot(S.arenaId, BS.m.turn, [BS.res[0], BS.res[1]]);
 }
@@ -760,7 +770,7 @@ $('#bReady').onclick = () => {
 $('#bSkip').onclick = () => { // auto-build: the ready-made 30-block tower, locked in
   if (S.phase !== 'build' || BS.locked || BS.sent) return;
   if (!BS.online) return finishHotBuild(true); // hot-seat: this player gets the auto tower; the other still gets to build
-  BS.plans[BS.side] = autoPlan(BS.side); BS.res[BS.side] = validateBuild(BS.side, BS.plans[BS.side]); BS.sent = true; BS.ghost = null;
+  BS.plans[BS.side] = autoPlan(BS.side, towerColor(BS.side)); BS.res[BS.side] = validateBuild(BS.side, BS.plans[BS.side]); BS.sent = true; BS.ghost = null;
   sock.emit('plan', { plan: BS.plans[BS.side], ready: true }); renderBuild();
 };
 
@@ -945,6 +955,7 @@ function renderCustom() {
   if (document.activeElement !== $('#nameIn')) $('#nameIn').value = cLook.name;
   document.querySelectorAll('#swColor button').forEach(b => b.classList.toggle('on', b.dataset.v === cLook.color));
   document.querySelectorAll('#swFletch button').forEach(b => b.classList.toggle('on', b.dataset.v === cLook.fletch));
+  document.querySelectorAll('#swTower button').forEach(b => b.classList.toggle('on', b.dataset.v === cLook.tower));
   for (const [k, list] of Object.entries(pickers)) $(`.cyc[data-k="${k}"] span`).textContent = list.find(x => x[0] === cLook[k])[1];
   $('.cyc[data-k="taunt"] span').textContent = `“${TAUNTS[cLook.taunt]}”`;
 }
@@ -952,6 +963,8 @@ function setLook(patch) { cLook = sanitizeLook({ ...cLook, ...patch }, cSlot); s
 $('#swColor').innerHTML = PALETTE.map(p => `<button data-v="${p.id}" aria-label="${p.name}" style="background:${css(p.hex)}"></button>`).join('');
 $('#swFletch').innerHTML = FLETCH.map(p => `<button data-v="${p.id}" aria-label="${p.id} fletching" style="background:${css(p.hex)}"></button>`).join('');
 $('#swColor').onclick = e => { const v = e.target.dataset.v; if (v) setLook({ color: v }); };
+$('#swTower').innerHTML = BLOCK_COLORS.map(c => `<button data-v="${c.id}" aria-label="${c.name} tower" title="${c.name}" style="background:${css(c.hex)}"></button>`).join('');
+$('#swTower').onclick = e => { const v = e.target.dataset.v; if (v) setLook({ tower: v }); };
 $('#swFletch').onclick = e => { const v = e.target.dataset.v; if (v) setLook({ fletch: v }); };
 document.querySelectorAll('.cyc').forEach(c => c.querySelectorAll('button').forEach(b => b.onclick = () => {
   const k = c.dataset.k, d = +b.dataset.d;
@@ -995,6 +1008,8 @@ window.__game = {
   get build() { return BS; },
   buildPlace: (gx, gz) => buildTry([gx, gz]), buildArcher: (ax, az) => buildArcherTry([ax, az]), buildUndo: () => $('#bUndo').click(), buildReady: () => $('#bReady').click(),
   buildSkip: () => $('#bSkip').click(), passGo: () => $('#passGo').click(),
+  buildColor: id => pickColor(id), blockColor: i => arena.blocks[i].userData.col, blockHex: i => arena.blockHex(i), // v5.3 colour hooks
+  blockRgb: i => arena.blocks[i].material.color.getHex(), get colors() { return S.colors; },
   cellScreen(gx, gz) { const s = BS.side, { r } = withBlock(s, BS.plans[s], [gx, gz]); const p = r.ok ? r.blocks.at(-1) : r.pos || [TX(s) + (gx + 0.5) * CELL, 5.4, (gz + 0.5) * CELL]; const q = new V(p[0], p[1] - 0.38, p[2]).project(camera); /* the surface the block would rest on */ return [(q.x + 1) / 2 * innerWidth, (1 - q.y) / 2 * innerHeight]; },
   validate: (s, plan) => validateBuild(s, plan), autoPlan, buildPlaceRaw: plan => { const s = BS.side, r = validateBuild(s, plan); if (r.ok) setPlan(plan, r); else buildMsg(r.err, true); return r; },
   pick: (x, y) => { const k = buildPick(x, y); return k && { p: k.p.toArray(), n: k.n.toArray(), block: k.block }; },

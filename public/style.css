@@ -183,6 +183,20 @@ button.icon { flex: none; width: 44px; height: 44px; padding: 0; border-radius: 
   #bReady { flex: 0 0 auto; min-width: 120px; }
   #bMsg { top: calc(max(8px, var(--sat)) + 38px); } /* v5.2: keep the build zone (low on screen) clear */
 }
+/* v5.3: block colour picker. Portrait: a slim row above the tools; landscape: a 2x5 column on the right edge (the build zone stays clear) */
+#bColors { display: flex; gap: 6px; justify-content: center; pointer-events: auto; }
+#bColors button { width: 28px; height: 28px; min-height: 0; padding: 0; border-radius: 9px; border: 2.5px solid var(--line); box-shadow: 0 2px 0 var(--line);
+  background-image: linear-gradient(135deg, #fff6 0 30%, #0000 31% 69%, #0003 70%); }
+#bColors button.on { transform: translateY(-3px) scale(1.12); box-shadow: 0 2px 0 var(--line), 0 0 0 3px #ffd23f; }
+#bColors button.on::after { content: '✓'; color: #fff; font-size: 15px; font-weight: 700; text-shadow: 0 0 2px #000, 0 1px 2px #000; }
+#bColors button:disabled { opacity: .45; }
+@media (max-height: 500px) {
+  #bColors { position: fixed; right: max(8px, var(--sar)); top: calc(max(8px, var(--sat)) + 52px); display: grid; grid-template-columns: repeat(2, 28px); gap: 6px;
+    background: #ffffffd8; border: 2px solid var(--line); border-radius: 12px; padding: 6px; }
+}
+.sw.sm { grid-template-columns: repeat(5, 36px); gap: 7px; }
+.sw.sm button { width: 36px; height: 36px; border-radius: 10px; }
+.sw.sm button.on::after { font-size: 17px; }
 #passEye { font-size: 46px; line-height: 1.1; }
 #passText { text-align: center !important; }
 #passGo { background: linear-gradient(#6fdc5a, #36a32a); }

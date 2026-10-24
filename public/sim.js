@@ -1,4 +1,5 @@
-// Shared, dependency-free simulation: used by the browser (hot-seat) and the server (online rooms).
+// Shared simulation (no deps beyond looks.js): used by the browser (hot-seat) and the server (online rooms).
+import { DEFAULT_BLOCK, isBlockColor } from './looks.js';
 export const DIST = 15, HP = 100, MAXV = 26, G = 9.8;
 // Each archer stands on top of a square tower built from loose stone blocks (every block is a rigid body, see physics.js).
 export const WALL_H = 5, SHOULDER = 1.15;                 // tower-top floor height, bow-arm pivot height above the archer's feet
@@ -46,15 +47,15 @@ export function initialPhys(builds = null) {
 // may stand on a 0.4 m grid on the ground or on any block top, centre fully supported. Pure + deterministic (server and both clients).
 export const BUILD_GRID = 3, ARCHER_GRID = 5, BUILD_LEVELS = 8, BUILD_TOP = BUILD_LEVELS * CELL, BUILD_TIME = 60;
 export const BUILD_SLOT0 = [0, 1].map(s => LAYOUT.findIndex(l => l.s === s && l.kind === 'build'));
-export const defaultPlan = () => ({ blocks: [], archer: [0, 0] });
+export const defaultPlan = () => ({ blocks: [], colors: [], archer: [0, 0] });
 // Skip / quick play: a ready-made 30-block tower (2x2 keep, 6 high, plus a 2x1x3 front buttress), archer on the keep top (4.8 m).
-export function autoPlan(s) {
+export function autoPlan(s, color = DEFAULT_BLOCK) {
   const blocks = [], front = s ? -2 : 1;
   for (let y = 0; y < 6; y++) {
     for (const gx of [-1, 0]) for (const gz of [-1, 0]) blocks.push([gx, gz, y]);
     if (y < 3) for (const gz of [-1, 0]) blocks.push([front, gz, y]);
   }
-  return { blocks, archer: [0, 0] };
+  return { blocks, colors: blocks.map(() => (isBlockColor(color) ? color : DEFAULT_BLOCK)), archer: [0, 0] };
 }
 const box = (p, h) => ({ x0: p[0] - h[0], x1: p[0] + h[0], y1: p[1] + h[1], z0: p[2] - h[2], z1: p[2] + h[2] });
 const ON = 0.015; // blocks sit 2 x 0.012 apart, so a spot on the seam between two equal tops still counts as supported
@@ -71,6 +72,8 @@ export function validateBuild(s, plan) {
   const fail = (err, at = -1) => ({ ok: false, err, at });
   if (!plan || typeof plan !== 'object' || !Array.isArray(plan.blocks)) return fail('Bad plan');
   if (plan.blocks.length > BUILD_MAX) return fail(`Only ${BUILD_MAX} blocks`);
+  const cl = plan.colors; // v5.3: optional per-block colour ids (missing = sandstone), only from the palette
+  if (cl !== undefined && (!Array.isArray(cl) || cl.length !== plan.blocks.length || !cl.every(isBlockColor))) return fail('Bad block colour');
   const H = LAYOUT[BUILD_SLOT0[s]].half, boxes = [], out = [], cols = new Map();
   for (let n = 0; n < plan.blocks.length; n++) {
     const c = plan.blocks[n];
@@ -87,7 +90,7 @@ export function validateBuild(s, plan) {
   if (!Array.isArray(a) || !isInt(a[0], -ARCHER_GRID, ARCHER_GRID) || !isInt(a[1], -ARCHER_GRID, ARCHER_GRID)) return fail('Archer must stay in your build zone');
   const ax = towerX(s) + a[0] * 0.4, az = a[1] * 0.4, sf = surface(boxes, ax, az, ARCHER_HALF[0], ARCHER_HALF[2]);
   if (!sf.on) return { ...fail('Archer needs solid stone underfoot'), pos: out.at(-1) };
-  return { ok: true, blocks: out, archer: [rd(ax), rd(sf.top), rd(az)] };
+  return { ok: true, blocks: out, colors: plan.blocks.map((_, n) => (cl ? cl[n] : DEFAULT_BLOCK)), archer: [rd(ax), rd(sf.top), rd(az)] };
 }
 function inBlock(b, h, p, m = 0.03) { // point inside an oriented box (inverse-rotate by the quaternion)
   const dx = p.x - b[0], dy = p.y - b[1], dz = p.z - b[2], qx = -b[3], qy = -b[4], qz = -b[5], qw = b[6];

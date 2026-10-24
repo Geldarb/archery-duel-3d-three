@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="build" content="ad3t-v5.2">
+<meta name="build" content="ad3t-v5.3">
 <meta name="color-scheme" content="only light">
 <meta name="theme-color" content="#2f6fe0">
 <meta name="mobile-web-app-capable" content="yes">
@@ -42,6 +42,7 @@
   <div id="bTop"><b id="bTitle">Build your tower</b><span id="bCount">▦ 0/30</span><span id="bTimer"></span><span id="bOpp" class="hidden"></span></div>
   <div id="bMsg"></div>
   <div id="bBar">
+    <div id="bColors" role="radiogroup" aria-label="Block colour"></div>
     <div id="bTools">
       <button id="bUndo" aria-label="Undo">↶<small>Undo</small></button>
       <div id="bTool"><button data-tool="block" class="on">▦ Block</button><button data-tool="archer">🏹 Archer</button></div>
@@ -68,7 +69,7 @@
     <div id="homeMsg" class="msg"></div>
     <button id="installBtn" class="hidden"><svg viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M5 20h14"/></svg>Install app</button>
     <div id="installTip" class="tip hidden"></div>
-    <div class="build">ad3t-v5.2</div>
+    <div class="build">ad3t-v5.3</div>
   </div>
   <footer class="pf"><button id="hotBtn">Hot-seat</button><button id="createBtn">Create room</button></footer>
 </div>
@@ -113,6 +114,7 @@
       <div class="orow"><label>Emblem</label><div class="cyc" data-k="emblem"><button data-d="-1" aria-label="previous emblem">◀</button><span></span><button data-d="1" aria-label="next emblem">▶</button></div></div>
       <div class="orow"><label>Bow</label><div class="cyc" data-k="bow"><button data-d="-1" aria-label="previous bow">◀</button><span></span><button data-d="1" aria-label="next bow">▶</button></div></div>
       <div class="orow"><label>Fletching</label><div class="sw" id="swFletch"></div></div>
+      <div class="orow"><label>Tower colour</label><div class="sw sm" id="swTower"></div></div>
       <div class="orow"><label>Taunt</label><div class="cyc" data-k="taunt"><button data-d="-1" aria-label="previous taunt">◀</button><span></span><button data-d="1" aria-label="next taunt">▶</button></div></div>
     </div>
     <div class="note">Hot-seat uses both players · online uses Player 1</div>
