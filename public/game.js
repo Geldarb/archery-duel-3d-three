@@ -196,7 +196,7 @@ function startMatch({ arenaId, mode, me = 0, turn = 0, st = null, wind, looks: l
   S.colors = colors || (builds ? builds.map(b => (b && b.colors) || null) : null); // v5.3: per-block colours (online: from the server each round)
   arena.setBuildColors(S.colors); arena.resetBlocks(st.phys.b); placeArchers(st.phys.a); pickupKey = '-'; showPickup(st.pickup, false);
   for (const i of [0, 1]) if (ARROWS[S.types[i]].special) S.types[i] = 'normal';
-  S.last = [null, null]; camExit(true); // v5.4: the last-shot guide starts fresh every round
+  S.last = [null, null]; camExit(true); if (!score[0] && !score[1]) resetViews(); // v5.5: a new match (0-0) forgets custom views; v5.4: the last-shot guide starts fresh every round
   Object.assign(S, { mode, me, turn, hp: [...st.hp], st, wind, arenaId, phase: 'aim', winner: -1, play: null, queue: [], focus: null, draw: 0, best, score: [...score], seriesWinner: -1, pending: null, cardT: 0 });
   show('#roundCard', false);
   archers.forEach((a, i) => a.pose(0.5, 0, true, S.types[i]));

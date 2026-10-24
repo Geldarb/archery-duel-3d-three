@@ -153,8 +153,8 @@ if (which !== 'online') {
   c = await C(pg); const m0 = await onScreen(pg, V);
   assert(c.preset === 'me' && m0 && m0[0] < 0.2, `cam: Me is back behind the aiming archer (${m0})`);
   await clampSweep(pg, 'cam');
-  await pg.tap('#camBar [data-p="side"]'); await sleep(300);
-  // Done -> back to aim, snapped to the default view
+  await pg.tap('#camBar [data-p="me"]'); await sleep(300);
+  // Done with the Me preset -> back to aim, snapped to the default view (v5.5: a custom view would stay, see test/v55.mjs)
   await pg.tap('#camDone'); await sleep(120);
   c = await C(pg); const def = await pg.evaluate(() => __game.aimCam()[0]);
   assert(!c.on && !(await vis(pg, '#camBar')) && Math.hypot(...c.pos.map((v, i) => v - def[i])) < 0.15, 'cam: Done returns to aim mode and the view snaps back to default');
