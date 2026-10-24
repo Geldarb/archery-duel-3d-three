@@ -238,7 +238,10 @@ if (which !== 'hot') {
   await A.waitForFunction(() => /^[A-Z0-9]{4}$/.test(document.querySelector('#code').textContent), { timeout: 15000 });
   const code = await A.$eval('#code', e => e.textContent);
   await Bp.goto(`${base}/?room=${code}`, { waitUntil: 'load' });
-  for (const P of [A, Bp]) await P.waitForFunction(() => __game.S.mode === 'online' && __game.S.phase === 'aim', { timeout: 30000 });
+  for (const P of [A, Bp]) await P.waitForFunction(() => __game.S.mode === 'online' && /aim|build|wait/.test(__game.S.phase), { timeout: 30000 });
+  await sleep(1500); // live server (no LEGACY_TOWERS): build phase -> both press Ready with the default tower
+  for (const P of [A, Bp]) if (await P.evaluate(() => __game.S.phase === 'build') && await vis(P, '#bReady')) await P.click('#bReady');
+  for (const P of [A, Bp]) await P.waitForFunction(() => __game.S.mode === 'online' && __game.S.phase === 'aim', { timeout: 40000 });
   await sleep(1200);
   const both = () => Promise.all([A, Bp].map(X => settle(X)));
   const who = async () => { const t = await A.evaluate(() => __game.S.turn); const me = await A.evaluate(() => __game.S.me); return t === me ? [A, Bp] : [Bp, A]; };
