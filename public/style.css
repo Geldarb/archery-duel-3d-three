@@ -141,6 +141,8 @@ button.icon { flex: none; width: 44px; height: 44px; padding: 0; border-radius: 
 #score b { font-size: 13px; }
 #roundCard { position: fixed; left: 50%; top: 38%; transform: translate(-50%, -50%); z-index: 6; pointer-events: none; text-align: center; background: #fff; color: var(--ink);
   border: 5px solid var(--line); border-radius: 22px; padding: 10px 22px; box-shadow: 0 5px 0 var(--line); animation: pop .35s ease-out; }
+#roundCard.vic { top: auto; bottom: 16%; transform: translate(-50%, 0); }
+@media (orientation: landscape) { #roundCard.vic { bottom: 8%; } }
 #roundCard b { display: block; font-size: 26px; white-space: nowrap; } #roundCard span { font-size: 20px; font-weight: 700; }
 @keyframes pop { from { transform: translate(-50%, -50%) scale(.6); opacity: 0; } }
 /* v5: special ammo slots (bomb, wheelchair, …) */

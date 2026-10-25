@@ -457,7 +457,7 @@ function endShot() {
     S.phase = 'round'; S.winner = mm.winner; S.cardT = 4.6; startVictory(mm.winner);
     $('#roundCard b').textContent = S.mode === 'online' && mm.winner === S.me ? 'Round to you!' : `Round to ${nameOf(mm.winner)}!`;
     $('#roundCard span').textContent = `${S.score[0]} - ${S.score[1]}`; $('#roundCard').style.borderColor = css(cols[mm.winner]);
-    show('#roundCard', true); sfx.ding();
+    $('#roundCard').classList.toggle('vic', !!S.victory); show('#roundCard', true); sfx.ding(); // v6.0: card sits low while the victory show plays
     if (S.mode === 'hot') S.pending = { arenaId: S.arenaId, mode: 'hot', wind: randomWind(), turn: 1 - mm.winner, best: S.best, score: S.score, builds: S.builds };
   } else if (mm.winner >= 0) { // series (or single match) over
     const w = mm.seriesWinner, series = S.best > 1, online = S.mode === 'online';
@@ -1124,14 +1124,14 @@ function fadeTo(mt, want, dt) {
   if (mt.transparent !== tr) { mt.transparent = tr; mt.depthWrite = !tr; mt.needsUpdate = true; }
 }
 function fadeOccluders(dt) { // stones between the camera and your archer (e.g. after a fall), and trees in front of the action, turn see-through
-  const on = (S.phase === 'aim' || S.phase === 'wait') && !CAM.on;
+  const vf = victoryFocus(), on = ((S.phase === 'aim' || S.phase === 'wait') && !CAM.on) || !!vf; // v6.0: also clear the view of the ragdoll / dance
   _ab.subVectors(camLook, camera.position); const LL = _ab.lengthSq();
   for (const t of arena.fadeTrees || []) {
     const k = _ap.subVectors(t.c, camera.position).dot(_ab) / LL;
     const want = k > 0 && k < 0.97 && _ap.addScaledVector(_ab, -k).length() < t.r + 0.6 ? 0.22 : 1;
     for (const mt of t.mats) fadeTo(mt, want, dt);
   }
-  _chest.copy(archers[viewer()].root.position).y += 1;
+  _chest.copy((vf || archers[viewer()]).root.position).y += 1;
   _ab.subVectors(_chest, camera.position); const L2 = _ab.lengthSq();
   for (const m of arena.blocks) {
     let want = 1;
@@ -1143,14 +1143,31 @@ function fadeOccluders(dt) { // stones between the camera and your archer (e.g. 
   }
 }
 function stoneTopNear(x, z) { let t = -1; for (const m of arena.blocks) if (Math.abs(m.position.x - x) < 1.6 && Math.abs(m.position.z - z) < 1.6) t = Math.max(t, m.position.y + 0.5); return t; }
-function pipRect() {
+function pipBase() {
   const portrait = innerWidth < innerHeight, w = Math.round(innerWidth * (portrait ? 0.3 : 0.16)), h = Math.round(w * (portrait ? 1.15 : 0.85));
-  return { x: innerWidth - w - 10, y: 74, w, h };
+  const x = innerWidth - w - 10, mid = document.getElementById('mid'), mr = mid && mid.offsetWidth ? mid.getBoundingClientRect() : null;
+  return { x, y: mr && mr.right > x - 4 ? Math.max(74, Math.round(mr.bottom + 8)) : 74, w, h }; // v6.0: stay clear of the turn/score badge
+}
+let pipR = null, pipKey = '';
+const pipRect = () => pipR || pipBase();
+const markXY = () => { // v6.0: screen position of the last-shot X (null when hidden / behind the camera)
+  if (!landMark.visible) return null; const q = landMark.position.clone().project(camera);
+  return q.z < 1 ? [(q.x + 1) / 2 * innerWidth, (1 - q.y) / 2 * innerHeight] : null;
+};
+function placePip() { // v6.0: the opponent inset never hides the landing X: try the corner, then below the X, then smaller, then the left side
+  const b = pipBase(), m = markXY(), pad = 34, hits = r => m && m[0] > r.x - pad && m[0] < r.x + r.w + pad && m[1] > r.y - pad && m[1] < r.y + r.h + pad;
+  const sw = Math.round(b.w * 0.72), sh = Math.round(b.h * 0.72), bottomMax = innerHeight - (innerWidth < innerHeight ? 190 : 120);
+  const cands = [b];
+  if (m) cands.push({ ...b, y: Math.round(m[1] + pad + 6) }, { x: innerWidth - sw - 10, y: b.y, w: sw, h: sh }, { x: innerWidth - sw - 10, y: Math.round(m[1] + pad + 6), w: sw, h: sh }, { x: 10, y: innerWidth < innerHeight ? 190 : 140, w: sw, h: sh });
+  const r = cands.find(r => !hits(r) && r.y + r.h <= bottomMax) || null;
+  const key = r ? `${r.x},${r.y},${r.w},${r.h}` : 'none';
+  if (key !== pipKey) { pipKey = key; pipR = r; if (r) { Object.assign($('#pip').style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w - 4}px`, height: `${r.h - 4}px` }); pipCam.aspect = r.w / r.h; pipCam.updateProjectionMatrix(); } }
+  return !!r;
 }
 function resize() {
   renderer.setSize(innerWidth, innerHeight);
   camera.aspect = innerWidth / innerHeight; camera.fov = camera.aspect < 0.9 ? 70 : 50; camera.updateProjectionMatrix();
-  const r = pipRect();
+  pipKey = ''; pipR = null; const r = pipRect();
   Object.assign($('#pip').style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w - 4}px`, height: `${r.h - 4}px` });
   pipCam.aspect = r.w / r.h; pipCam.updateProjectionMatrix();
 }
@@ -1189,6 +1206,7 @@ function frame() {
   renderer.setViewport(0, 0, innerWidth, innerHeight);
   effect.render(scene, camera);
   let pip = (S.phase === 'aim' || S.phase === 'wait') && !CAM.on;
+  if (pip) pip = placePip();
   if (pip && pickupObj) { // never let the opponent inset cover the power-up
     const q = pickupObj.position.clone().project(camera), r = pipRect(), x = (q.x + 1) / 2 * innerWidth, y = (1 - q.y) / 2 * innerHeight;
     if (q.z < 1 && x > r.x - 40 && x < r.x + r.w + 40 && y > r.y - 50 && y < r.y + r.h + 40) pip = false;
@@ -1292,7 +1310,7 @@ window.__game = {
   guide: () => {
     const at = ghostLine.geometry.attributes.position, n = ghostLine.geometry.drawRange.count;
     return { last: clone(S.last), ghost: ghostLine.visible, ghostN: Math.min(n, GHOST_N), ghost0: [at.getX(0), at.getY(0), at.getZ(0)], ghostCol: ghostLine.material.color.getHex(), dashed: ghostLine.material.isLineDashedMaterial, dashes: dashCore.visible ? dashCore.count : 0, glow: dashGlow.material.color.getHex(),
-      markScale: landMark.scale.x, markTop: !landMark.material.depthTest && landMark.renderOrder > 10, arcTop: !dashCore.material.depthTest,
+      markScale: landMark.scale.x, markXY: markXY(), pipRect: $('#pip').classList.contains('hidden') ? null : pipRect(), markTop: !landMark.material.depthTest && landMark.renderOrder > 10, arcTop: !dashCore.material.depthTest,
       mark: landMark.visible ? landMark.position.toArray() : null, label: $('#lastShot').textContent, labelVis: !$('#lastShot').classList.contains('hidden'), tip: $('#aimTip').innerHTML };
   },
   lastText,
@@ -1405,5 +1423,8 @@ function resetVictoryPose() { // back to upright, facing each other
 function victoryCam(t) { // first the loser's tumble, then the winner's dance
   const v = S.victory, W = archers[v.w], L = archers[v.l], por = camera.aspect < 0.9 ? 1.45 : 1;
   if (v.t < 2.1) { const p = L.root.position.clone(); p.y = Math.max(p.y, 1.2); return [p.clone().add(new V(v.away.x * 3 - 2 * L.f * por, 2.6 * por, 7.5 * por)), p.clone().add(new V(0, 0.6, 0))]; }
-  const p = W.root.position.clone(); return [p.clone().add(new V(W.f * 3.6 * por, 1.9 * por, 3.4 * por)), p.clone().add(new V(0, 1.0, 0))];
+  const p = W.root.position.clone(), c = p.clone().add(new V(W.f * 4.2 * por, 2.8 * por, 5.2 * por)); // v6.0: a bit higher so merlons don't hide the dance
+  for (let k = 0, b; k < 60 && (b = blockAt(c)); k++) c.y = b.max.y + 0.05; // never inside a block
+  return [c, p.clone().add(new V(0, 1.1, 0))];
 }
+const victoryFocus = () => { const v = S.victory; if (!v || S.play || !['round', 'over'].includes(S.phase)) return null; return archers[v.t < 2.1 ? v.l : v.w]; };

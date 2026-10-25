@@ -77,7 +77,7 @@ if (which !== 'online') {
   assert(bl.archers[0] === false && bl.archers[1] === true && bl.revealed >= 1, `hot: Red ("${bl.names[1]}") is the wizard in game, Blue is normal; reveal sparkle fired`);
   await pg.evaluate(() => __game.camPreset ? (__game.camEnter(), __game.camPreset('enemy')) : 0); await sleep(1800);
   await shot(pg, 'baldy-ingame-360x640');
-  await pg.evaluate(() => __game.camExit()); await sleep(300);
+  await pg.evaluate(() => { __game.camPreset('me'); __game.camExit(); }); await sleep(300); // v5.5: views persist, so go back to Me first
   // pickup registry: all five specials can come out of a sky crate
   const reg = await pg.evaluate(async () => { const m = await import('/sim.js'); const r = m.rng(7), seen = {}; for (let k = 0; k < 2000; k++) { const p = m.spawnPickup(r); seen[p.kind] = (seen[p.kind] || 0) + 1; } return { SPECIALS: m.SPECIALS, seen }; });
   assert(['bomb', 'wheelchair', 'chicken', 'cow', 'boot'].every(k => reg.SPECIALS.includes(k) && reg.seen[k] > 250), `registry: sky crates grant bomb/wheelchair/chicken/cow/boot (${JSON.stringify(reg.seen)})`);
@@ -194,13 +194,31 @@ if (which !== 'online') {
     assert(true, 'victory: results panel opens after the dance');
   } else assert(ph === 'round', `victory (landscape): round show (${ph})`);
   await pg.close();
+  // PiP never hides the landing X (portrait + landscape)
+  for (const [w, h] of [[360, 640], [740, 360]]) {
+    const pp = await open(w, h);
+    await pp.evaluate(() => { __game.startHot('field', 0); __game.setWind(0, 0); }); await sleep(1200);
+    let checked = 0, worst = '';
+    for (const aim of [{ pitch: 0.62, power: 0.86 }, { pitch: 0.55, power: 0.8 }, { pitch: 0.7, power: 0.93 }, { pitch: 0.5, power: 0.72 }]) {
+      await pp.evaluate(a => __game.shootAim(a, 'normal'), aim); await settle(pp); await sleep(1400);
+      if (await pp.evaluate(() => __game.S.phase !== 'aim')) break;
+      const g = await pp.evaluate(() => __game.guide());
+      if (!g.markXY) continue; checked++;
+      const r = g.pipRect, m = g.markXY;
+      if (r && m[0] > r.x - 10 && m[0] < r.x + r.w + 10 && m[1] > r.y - 10 && m[1] < r.y + r.h + 10) worst = `X ${m.map(Math.round)} in PiP ${JSON.stringify(r)}`;
+      if (checked === 2) await shot(pp, `pip-x-${w}x${h}`);
+    }
+    const lay = await layout(pp);
+    assert(checked >= 1 && !worst && lay.bad.length === 0, `pip ${w}x${h}: the opponent inset never covers the landing X (${checked} turns checked) and overlaps nothing ${worst} ${lay.bad}`);
+    await pp.close();
+  }
 }
 
 if (which !== 'hot') {
   // ---------------- online: server TEST_AMMO=chicken,cow,boot; B is Baldy Mordy ----------------
   const cA = await b.createBrowserContext(), cB = await b.createBrowserContext(), skip = 'window.__autoSkip = true;';
   const A = await open(360, 640, cA, base, skip), Bp = await open(740, 360, cB, base, skip + "localStorage.setItem('ad3t-look-0', JSON.stringify({ name: 'baldy mordy' }));");
-  await A.click('#arenas button[data-a="field"]'); await A.click('#createBtn');
+  await A.click('#arenas button[data-a="field"]'); await A.click('#seriesBtns button[data-s="3"]'); await A.click('#createBtn'); // Bo3 so the next round is tested
   await A.waitForFunction(() => /^[A-Z0-9]{4}$/.test(document.querySelector('#code').textContent), { timeout: 15000 });
   const code = await A.$eval('#code', e => e.textContent);
   await Bp.goto(`${base}/?room=${code}`, { waitUntil: 'load' });
@@ -214,7 +232,7 @@ if (which !== 'hot') {
   assert(ba.archers[meB] && !ba.archers[1 - meB] && bb.archers[meB] && !bb.archers[1 - meB], 'online: Baldy Mordy skin shows for the opponent and for the player');
   await A.evaluate(m => { __game.camEnter(); __game.camPreset(__game.S.me === m ? 'me' : 'enemy'); }, meB); await sleep(1800);
   await shot(A, 'online-baldy-opponent-360x640');
-  await A.evaluate(() => __game.camExit());
+  await A.evaluate(() => { __game.camPreset('me'); __game.camExit(); });
   const who = async () => { const t = await A.evaluate(() => __game.S.turn); const me = await A.evaluate(() => __game.S.me); return t === me ? [A, Bp] : [Bp, A]; };
   const both = () => Promise.all([A, Bp].map(X => settle(X)));
   const ammo0 = await A.evaluate(() => __game.st.ammo);
