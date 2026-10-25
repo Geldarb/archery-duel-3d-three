@@ -81,7 +81,8 @@ if (which !== 'online') {
   await pg.evaluate(() => { __game.camPreset('me'); __game.camExit(); }); await sleep(300); // v5.5: views persist, so go back to Me first
   // pickup registry: all five specials can come out of a sky crate
   const reg = await pg.evaluate(async () => { const m = await import('/sim.js'); const r = m.rng(7), seen = {}; for (let k = 0; k < 2000; k++) { const p = m.spawnPickup(r); seen[p.kind] = (seen[p.kind] || 0) + 1; } return { SPECIALS: m.SPECIALS, seen }; });
-  assert(['bomb', 'wheelchair', 'chicken', 'cow', 'boot'].every(k => reg.SPECIALS.includes(k) && reg.seen[k] > 250), `registry: sky crates grant bomb/wheelchair/chicken/cow/boot (${JSON.stringify(reg.seen)})`);
+  assert(['bomb', 'wheelchair', 'chicken', 'cow', 'boot'].every(k => reg.SPECIALS.includes(k) && reg.seen[k] > 2000 / reg.SPECIALS.length * 0.6), // v6.1: more specials share the crate odds
+    `registry: sky crates grant bomb/wheelchair/chicken/cow/boot (${JSON.stringify(reg.seen)})`);
   // HUD: all 8 slots fit on a 360px phone
   await pg.evaluate(() => { for (const k of ['bomb', 'wheelchair', 'chicken', 'cow', 'boot']) __game.giveAmmo(k, 1, 0); }); await sleep(300);
   const icons = await pg.evaluate(() => ['chicken', 'cow', 'boot'].map(k => { const e = document.querySelector(`#types button[data-t="${k}"]`); return e && !e.classList.contains('hidden') && !!e.querySelector('svg') && e.querySelector('em').textContent; }));
