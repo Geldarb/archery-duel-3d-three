@@ -444,9 +444,10 @@ function applyStatus(fresh) { // sync visuals with S.st.fx / S.st.big (after eac
   if ((status.disco[0] || status.disco[1]) && !sfx.discoOn() && !sfx.isMuted()) sfx.discoStart(60);
   if (!status.disco[0] && !status.disco[1] && sfx.discoOn()) sfx.discoStop();
 }
-function clearStatus() { for (const i of [0, 1]) { setWrap(i, false); setSplat(i, false); setDisco(i, false); } if (sfx.discoOn()) sfx.discoStop(); }
+function clearStatus() { status.unwrapAt = 0; for (const i of [0, 1]) { setWrap(i, false); setSplat(i, false); setDisco(i, false); } if (sfx.discoOn()) sfx.discoStop(); }
 const splatted = () => S.phase === 'aim' && myTurn() && !!(S.st && S.st.fx && S.st.fx[S.turn] && S.st.fx[S.turn].splat > 0);
 function statusTick(dt) {
+  if (status.unwrapAt && performance.now() > status.unwrapAt) { status.unwrapAt = 0; if (S.st && S.st.fx) for (const i of [0, 1]) if (!(S.st.fx[i].wrap > 0)) setWrap(i, false); } // the skipped player stays wrapped for a moment
   for (const a of archers) if (a && a.head) { const s = a.head.scale.x + (a.bigT - a.head.scale.x) * Math.min(1, dt * 6); a.head.scale.setScalar(s); }
   const sp = splatted(), el = $('#splat'); if (el && el.classList.contains('hidden') === sp) el.classList.toggle('hidden', !sp);
   if (!status.disco[0] && !status.disco[1]) return;
@@ -591,7 +592,7 @@ function endShot() {
   Object.assign(S, { hp: [...S.st.hp], turn: o.turn, wind: o.wind, play: null, aim: { pitch: 0.5, power: 0 } });
   applyStatus(false);
   S.lastSkipped = o.skipped == null ? -1 : o.skipped;
-  if (o.winner < 0 && S.lastSkipped >= 0) { const k = S.lastSkipped; flash(`${nameOf(k)} is wrapped up: turn skipped!`); floatText('SKIP!', archers[k].root.position.clone().add(new V(0, 2.4, 0)), '#ffffff'); }
+  if (o.winner < 0 && S.lastSkipped >= 0) { const k = S.lastSkipped; setWrap(k, true); status.unwrapAt = performance.now() + 2200; flash(`${nameOf(k)} is wrapped up: turn skipped!`); floatText('SKIP!', archers[k].root.position.clone().add(new V(0, 2.4, 0)), '#ffffff'); }
   const mm = { winner: o.winner, seriesWinner: o.seriesWinner };
   if (mm.winner >= 0) S.score = [...o.score];
   if (mm.winner >= 0 && mm.seriesWinner < 0) { // round over: card, then the next round (loser shoots first; online the server sends it)
