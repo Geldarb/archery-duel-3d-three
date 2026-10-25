@@ -70,3 +70,29 @@ export function whir(dur = 3) { // spinning wheels: rising then falling buzz wit
   o.connect(f); f.connect(g); g.connect(master); o.start(t); lfo.start(t); o.stop(t + dur + 0.05); lfo.stop(t + dur + 0.05);
   hiss(dur, 0.08, 'bandpass', 2500, 1800, 3, 0.2);
 }
+// v6.0 fun batch: rubber chicken, cow, boot, sad trombone, victory jingle, sparkle
+export const played = {}; // call counts (tests check the right sound fired, even when muted)
+const tag = n => { played[n] = (played[n] || 0) + 1; return ok(); };
+function note(type, f0, f1, d, dur, peak, filter, vib = 0, vibF = 6) { // scheduled note with optional vibrato
+  const t = ctx.currentTime + d, o = ctx.createOscillator(), g = ctx.createGain();
+  o.type = type; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + 0.03); g.gain.setValueAtTime(peak, t + dur * 0.7); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  if (vib) { const l = ctx.createOscillator(), lg = ctx.createGain(); l.frequency.value = vibF; lg.gain.value = vib; l.connect(lg); lg.connect(o.frequency); l.start(t); l.stop(t + dur + 0.05); }
+  if (filter) { o.connect(filter); filter.connect(g); } else o.connect(g);
+  g.connect(master); o.start(t); o.stop(t + dur + 0.05);
+}
+export const squawk = () => { if (!tag('squawk')) return; const p = 0.9 + Math.random() * 0.25; note('square', 900 * p, 1500 * p, 0, 0.12, 0.12, bp(1400, 3)); note('square', 1500 * p, 700 * p, 0.12, 0.22, 0.12, bp(1200, 3), 60, 30); };
+export const honk = () => { if (!tag('honk')) return; note('sawtooth', 520, 380, 0, 0.18, 0.2, bp(900, 4), 40, 28); hiss(0.05, 0.15, 'highpass', 3000, 2000); };
+export const moo = () => { if (!tag('moo')) return; note('sawtooth', 150, 118, 0, 1.1, 0.22, bp(420, 2.5), 4, 5); note('sawtooth', 300, 236, 0.02, 1.05, 0.06, bp(700, 4)); };
+export const stomp = () => { if (!tag('stomp')) return; osc('sine', 90, 24, 1.2, 1); hiss(0.9, 0.8, 'lowpass', 1200, 60, 0.7, 0.003); osc('square', 60, 30, 0.3, 0.3, bp(160, 1)); };
+export const boing = () => { if (!tag('boing')) return; note('sine', 180, 520, 0, 0.35, 0.25, null, 25, 14); };
+export function trombone() { // sad 'wah wah wah waaah'
+  if (!tag('trombone')) return;
+  [[311, 0, 0.42], [294, 0.48, 0.42], [277, 0.96, 0.42], [262, 1.44, 1.3]].forEach(([f, d, dur], k) => note('sawtooth', f, k === 3 ? f * 0.93 : f * 0.97, d, dur, 0.17, bp(f * 2.2, 1.6), k === 3 ? 9 : 3, 5));
+}
+export function jingle() { // short victory tune
+  if (!tag('jingle')) return;
+  [[523, 0], [659, 0.12], [784, 0.24], [1047, 0.36], [784, 0.52], [1047, 0.64]].forEach(([f, d], k) => note('square', f, f, d, k === 5 ? 0.5 : 0.13, 0.08, bp(f * 1.5, 1)));
+  [[262, 0], [392, 0.36], [523, 0.64]].forEach(([f, d]) => note('triangle', f, f, d, 0.3, 0.12));
+}
+export const sparkle = () => { if (!tag('sparkle')) return; [1568, 2093, 2637, 3136].forEach((f, k) => note('sine', f, f, k * 0.06, 0.35, 0.07)); };
