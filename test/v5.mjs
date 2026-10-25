@@ -150,7 +150,7 @@ if (which !== 'hot') {
     const s = await info(A);
     if (s.phase === 'over') break;
     const P = s.turn === 0 ? A : B, O = s.turn === 0 ? B : A, me = s.turn, tagP = s.turn === 0 ? 'A-360x640' : 'B-740x360';
-    const have = Object.keys(s.st.ammo[me]).filter(k => s.st.ammo[me][k] > 0);
+    const have = Object.keys(s.st.ammo[me]).filter(k => s.st.ammo[me][k] > 0 && ['bomb', 'wheelchair'].includes(k)); // v6.0 specials (chicken/cow/boot) are covered by test/v60
     let label, run;
     if (have.length) {
       const k = have[0];
