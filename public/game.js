@@ -2,9 +2,9 @@
 import * as THREE from 'three';
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { HP, ARROWS, ARENA_IDS, SHOULDER, SPECIALS, LAYOUT, BUILD_MAX, CELL, BUILD_TIME, BUILD_LEVELS, DIST, validateBuild, defaultPlan, autoPlan, seriesWinnerOf, makeWorld, simulateShot, finishShot, newRound, rng, winnerOf, randomWind, launch, facing, yawOf, initialPhys, G } from './sim.js';
+import { HP, ARROWS, ARENA_IDS, SHOULDER, SPECIALS, LAYOUT, BUILD_MAX, CELL, BUILD_TIME, BUILD_LEVELS, DIST, validateBuild, defaultPlan, autoPlan, seriesWinnerOf, makeWorld, simulateShot, finishShot, newRound, rng, winnerOf, randomWind, launch, facing, yawOf, initialPhys, G, bigOf, nextTurn, roundState, emptyFx, NECK_Y, PIECES } from './sim.js';
 import { PhysRun, shotEvents, STEP } from './physics.js';
-import { SPECIAL_UI, pickupModel, bootModel } from './specials.js';
+import { SPECIAL_UI, PIECE_UI, pickupModel, bootModel, pigeonModel, discoBallModel, grandmaModel, peelDeco, bouncyDeco, mummyWrap } from './specials.js';
 import { buildArena, heraldry, toon, noOutline } from './world.js';
 import { PALETTE, FLETCH, HELMETS, EMBLEMS, BOWS, TAUNTS, BLOCK_COLORS, DEFAULT_BLOCK, isBlockColor, sanitizeLook, teamColors, hexOf, cleanName, isBaldy } from './looks.js';
 import * as sfx from './audio.js';
@@ -100,6 +100,9 @@ function makeArcher(i, look, color, parent = scene) { // chunky big-headed carto
     const feather = add(new THREE.SphereGeometry(1, 12, 8), mat(fletch === 0xffffff ? 0xffffff : fletch), -0.12, 1.86, 0.2); feather.scale.set(0.06, 0.3, 0.035); feather.rotation.z = 0.7;
   }
   }
+  const head = new THREE.Group(); head.position.y = NECK_Y; // v6.1: everything above the neck scales for Big Head mode
+  for (const o of [...root.children]) if (o.position.y > 1.2) { o.position.y -= NECK_Y; head.add(o); }
+  root.add(head);
   const quiver = add(new THREE.CylinderGeometry(0.12, 0.1, 0.58, 12), baldy ? robe : leather, -0.3, 0.92, 0.12); quiver.rotation.set(0.25, 0, -0.35);
   add(new THREE.TorusGeometry(0.12, 0.025, 6, 14), wood, 0, 0.29, 0, quiver).rotation.x = Math.PI / 2;
   const fl = mat(fletch); fl.side = THREE.DoubleSide;
@@ -133,7 +136,7 @@ function makeArcher(i, look, color, parent = scene) { // chunky big-headed carto
   parent.add(root);
   root.userData.baldy = baldy;
   const a = {
-    root, f, fletch, baldy, aim,
+    root, f, fletch, baldy, aim, head, bigT: 1,
     pose(pitch, draw, showArrow, type) {
       aim.rotation.set(0, 0, pitch);
       if (type && nocked.userData.type !== type) { aim.remove(nocked); nocked = makeArrow(type, fletch); nocked.userData.type = type; aim.add(nocked); }
@@ -184,7 +187,7 @@ const stuck = [];
 
 // ---------- state ----------
 const S = { last: [null, null], mode: 'menu', phase: 'menu', me: 0, turn: 0, hp: [HP, HP], st: newRound(Math.random), rand: Math.random, wind: { x: 0, z: 0 }, aim: { pitch: 0.5, power: 0 }, draw: 0,
-  types: ['normal', 'normal'], seriesChoice: 1, best: 1, score: [0, 0], seriesWinner: -1, pending: null, cardT: 0, arenaChoice: 'random', arenaId: 'field', play: null, queue: [], winner: -1, focus: null };
+  types: ['normal', 'normal'], bigChoice: false, bigMatch: false, seriesChoice: 1, best: 1, score: [0, 0], seriesWinner: -1, pending: null, cardT: 0, arenaChoice: 'random', arenaId: 'field', play: null, queue: [], winner: -1, focus: null };
 const viewer = () => (S.mode === 'online' ? S.me : S.turn);
 const myTurn = () => S.phase === 'aim' && (S.mode === 'hot' || S.turn === S.me);
 
@@ -237,10 +240,10 @@ function startMatch({ arenaId, mode, me = 0, turn = 0, st = null, wind, looks: l
   fading.length = 0;
   clearAnims(); resetVictoryPose();
   S.rand = rng((Math.random() * 2 ** 32) >>> 0); // hot-seat power-up spawns (online: the server's seeded rng)
-  st = clone(st || newRound(S.rand, builds)); // every round of a series resets to the layout built at its start
+  st = clone(st || newRound(S.rand, builds, { big: S.bigMatch })); // every round of a series resets to the layout built at its start
   S.builds = builds;
   S.colors = colors || (builds ? builds.map(b => (b && b.colors) || null) : null); // v5.3: per-block colours (online: from the server each round)
-  arena.setBuildColors(S.colors); arena.resetBlocks(st.phys.b); placeArchers(st.phys.a); pickupKey = '-'; showPickup(st.pickup, false);
+  arena.setBuildColors(S.colors); arena.resetBlocks(st.phys.b); setKinds(st.phys.k); placeArchers(st.phys.a); pickupKey = '-'; showPickup(st.pickup, false);
   for (const i of [0, 1]) if (ARROWS[S.types[i]].special) S.types[i] = 'normal';
   S.last = [null, null]; camExit(true); if (!score[0] && !score[1]) resetViews(); // v5.5: a new match (0-0) forgets custom views; v5.4: the last-shot guide starts fresh every round
   Object.assign(S, { mode, me, turn, hp: [...st.hp], st, wind, arenaId, phase: 'aim', winner: -1, play: null, queue: [], focus: null, draw: 0, best, score: [...score], seriesWinner: -1, pending: null, cardT: 0 });
@@ -252,19 +255,19 @@ function startMatch({ arenaId, mode, me = 0, turn = 0, st = null, wind, looks: l
   if (!(history.state && history.state.ad3t)) history.pushState({ ad3t: 'game' }, ''); // Android back in a match opens the menu
   show('#restart', mode === 'hot');
   $('#homeBtn').textContent = mode === 'online' ? 'Leave room' : 'Main menu';
-  camJump = true; updateHud();
-  if (fromBuild) flash('Towers revealed!');
+  camJump = true; applyStatus(true); updateHud();
+  if (fromBuild) flash(st.big ? 'Towers revealed! BIG HEADS!' : 'Towers revealed!');
   if (score[0] + score[1] === 0 && archers.some(a => a.baldy)) { // reveal the easter-egg wizard with a sparkle at the start of a series
     for (const a of archers) if (a.baldy) sparkle(scene, a.root.position.clone().add(new V(0, 1.3, 0)), 1.3);
     sfx.sparkle(); S.baldyRevealed = (S.baldyRevealed || 0) + 1;
   }
 }
 const pickArena = () => (S.arenaChoice === 'random' ? ARENA_IDS[Math.floor(Math.random() * ARENA_IDS.length)] : S.arenaChoice);
-const quickHot = (arenaId = pickArena(), turn = 0, builds = null) => startMatch({ arenaId, mode: 'hot', wind: randomWind(), turn, best: S.seriesChoice, builds }); // a new series, no build phase
-const startHot = (arenaId = pickArena(), turn = 0) => enterBuild({ arenaId, mode: 'hot', turn, best: S.seriesChoice }); // a new series starts with the build phase
+const quickHot = (arenaId = pickArena(), turn = 0, builds = null) => (S.bigMatch = S.bigChoice, startMatch({ arenaId, mode: 'hot', wind: randomWind(), turn, best: S.seriesChoice, builds })); // a new series, no build phase
+const startHot = (arenaId = pickArena(), turn = 0) => (S.bigMatch = S.bigChoice, enterBuild({ arenaId, mode: 'hot', turn, best: S.seriesChoice })); // a new series starts with the build phase
 function goHome() {
   if (S.mode === 'online' && sock) sock.emit('leave');
-  Object.assign(S, { mode: 'menu', phase: 'menu', play: null, queue: [], pending: null, cardT: 0, last: [null, null] }); endBuildUi(); camExit(true); resetViews();
+  Object.assign(S, { mode: 'menu', phase: 'menu', play: null, queue: [], pending: null, cardT: 0, last: [null, null] }); endBuildUi(); camExit(true); resetViews(); clearStatus();
   ['#hud', '#menuBtn', '#fsGame', '#camBtn', '#bottom', '#pip', '#lobby', '#over', '#menu', '#notice', '#roundCard', '#help', '#custom'].forEach(s => show(s, false));
   show('#home', true); $('#homeMsg').textContent = '';
   setLooks([loadLook(0), loadLook(1)]);
@@ -291,12 +294,15 @@ function playShot(m) {
   recordLast(m); camExit(false); // the shot cinematics take the camera back
   const arrows = m.sim.arrows.map(x => { const mesh = makeArrow(m.sim.type, archers[m.shooter].fletch); mesh.visible = false; scene.add(mesh); stuck.push(mesh); return { ...x, m: mesh, landed: false }; });
   // live rigid-body playback from the same snapshot + impulses the server uses; the server's settled state is snapped in at the end
-  const run = new PhysRun(S.st.phys, shotEvents(m.sim));
+  const run = new PhysRun(S.st.phys, shotEvents(m.sim, S.st));
   S.play = { arrows, ft: 0, hold: 1.0, m, run, fxi: 0, logi: 0, focus: null, chair: null, vy: new Float32Array(LAYOUT.length), puffs: 0, t0: performance.now() };
   S.phase = 'fly'; S.draw = 0; preview.visible = false;
   sfx.twang(); sfx.whoosh(Math.max(...arrows.map(a => a.res.t)) * 0.8);
   if (m.sim.type === 'cow') sfx.moo();
   if (m.sim.type === 'chicken') sfx.squawk();
+  if (m.sim.type === 'toilet') { sfx.unroll(); arrows.forEach(a => looTrail(a)); }
+  if (m.sim.type === 'grandma') sfx.grannyHey();
+  if (m.sim.type === 'pigeon') sfx.coo();
   S.play.squawkT = 0.45; S.play.bi = arrows.map(() => 0); S.fun = { type: m.sim.type, honks: 0, squawks: m.sim.type === 'chicken' ? 1 : 0, boot: null, cow: null };
   updateHud();
 }
@@ -305,7 +311,9 @@ function land(a) {
   const r = a.res, d = new V(...r.dir).normalize(), sp = a.m.userData.special;
   a.m.position.set(...r.pos).addScaledVector(d, sp ? -0.3 : 0.15);
   if (!sp) a.m.quaternion.setFromUnitVectors(X, d);
-  a.m.visible = r.kind !== 'out' && r.kind !== 'pickup' && sp !== 'bomb' && sp !== 'boot';
+  a.m.visible = r.kind !== 'out' && r.kind !== 'pickup' && !['bomb', 'boot', 'pigeon', 'grandma', 'disco', 'bighead'].includes(sp);
+  if (r.kind !== 'pickup' && sp === 'pigeon') pigeonFlock(S.play);
+  if (r.kind !== 'pickup' && (sp === 'grandma' || sp === 'disco' || sp === 'bighead')) { arena.puff(new V(...r.pos), 8, 0.3, undefined, 1, 0.5, 0.8); sfx.pop(); }
   if (sp === 'chicken' && r.kind !== 'pickup') { sfx.honk(); a.m.rotation.set(0, a.m.rotation.y, Math.PI / 2 * archers[S.play.m.shooter].f); } // flops onto its back
   if (sp === 'boot' && r.bootAt) giantBoot(r, S.play);
   if (r.kind === 'pickup') { // popped the balloon: the special goes to the shooter's ammo
@@ -327,7 +335,7 @@ function land(a) {
   } else if (r.kind === 'stone') sfx.crack();
   else if (r.kind !== 'out' && !sp) sfx.thunk();
 }
-const LOG_TEXT = { ground: ['#ff8a5c', 'Fell to the ground!'], fall: ['#ffd0a0', 'Took a tumble!'], debris: ['#fff', ''], blast: ['#ff6a3a', ''], spin: ['#9ad0ff', ''], cow: ['#fff3c4', ''], boot: ['#ffb36b', ''] };
+const LOG_TEXT = { pigeon: ['#f4f4f4', ''], toilet: ['#fbfbf4', ''], smack: ['#d9a6ff', ''], ground: ['#ff8a5c', 'Fell to the ground!'], fall: ['#ffd0a0', 'Took a tumble!'], debris: ['#fff', ''], blast: ['#ff6a3a', ''], spin: ['#9ad0ff', ''], cow: ['#fff3c4', ''], boot: ['#ffb36b', ''] };
 // ---------- v6.0 fun specials: client visuals only (gameplay is in sim.js / physics.js, identical on every machine) ----------
 function giantBoot(r, P) { // a giant boot falls out of the sky onto the landing spot and stomps (the physics 'boot' event lands at the same moment)
   const T = ARROWS.boot, at = new V(...r.bootAt), top = at.y + 22, dur = T.delay / 60, f = archers[P.m.shooter].f;
@@ -361,16 +369,142 @@ function cowWander(P, p) { // the flattened cow shakes itself off, then wanders 
   });
   a.clean = () => cow.removeFromParent();
 }
+// ---- v6.1 FUN DROP 2: banana/bouncy build pieces, pigeons, loo roll, disco, big heads, grandma ----
+const decos = [];
+function setKinds(k) { // decorate banana-peel / bouncy-castle build blocks (index lists from phys.k)
+  for (const d of decos) { d.o.removeFromParent(); dispose(d.o); if (d.hide) d.hide.material.visible = true; }
+  decos.length = 0;
+  if (!k) return;
+  for (const i of k.banana || []) { const m = arena.blockMesh(i); if (!m) continue; const o = peelDeco(); m.add(o); decos.push({ o, i, kind: 'banana' }); }
+  for (const i of k.bouncy || []) { const m = arena.blockMesh(i); if (!m) continue; const o = bouncyDeco(); m.add(o); m.material.visible = false; decos.push({ o, i, kind: 'bouncy', hide: m }); }
+}
+function bouncySquash(i) {
+  const d = decos.find(x => x.i === i && x.kind === 'bouncy'); if (!d) return;
+  anim(t => { const s = 1 - 0.3 * Math.exp(-t * 5) * Math.cos(t * 26); d.o.scale.set(2 - s, s, 2 - s); if (t > 1) { d.o.scale.set(1, 1, 1); return false; } });
+}
+function looTrail(a) { // a paper ribbon that unrolls behind the loo roll as it flies
+  const n = a.pts.length - 1; if (n < 1) return;
+  const pos = new Float32Array(n * 18), off = i => [0, 0.11 * Math.cos(i * 0.35), 0.11 * Math.sin(i * 0.35)];
+  for (let i = 0; i < n; i++) {
+    const p0 = a.pts[i], p1 = a.pts[i + 1], o0 = off(i), o1 = off(i + 1);
+    const A = [p0[0] + o0[0], p0[1] + o0[1], p0[2] + o0[2]], B = [p0[0] - o0[0], p0[1] - o0[1], p0[2] - o0[2]], Cc = [p1[0] + o1[0], p1[1] + o1[1], p1[2] + o1[2]], D = [p1[0] - o1[0], p1[1] - o1[1], p1[2] - o1[2]];
+    pos.set([...A, ...B, ...Cc, ...B, ...D, ...Cc], i * 18);
+  }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.computeVertexNormals(); g.setDrawRange(0, 0);
+  const m = new THREE.Mesh(g, noOutline(new THREE.MeshBasicMaterial({ color: 0xfbfbf4, side: THREE.DoubleSide, transparent: true }))); m.frustumCulled = false;
+  scene.add(m); a.trail = m; S.fun.loo = (S.fun.loo || 0) + 1;
+  anim(t => { if (!m.parent) return false; if (t > 5) m.material.opacity = Math.max(0, 1 - (t - 5) / 1.2); if (t > 6.2) { m.removeFromParent(); g.dispose(); return false; } });
+}
+function pigeonFlock(P) { // seven pigeons sweep over the target ~0.75 s after the pigeon shell pops
+  const en = 1 - P.m.shooter, tgt = archers[en].root.position.clone(), dir = new V(tgt.x - archers[P.m.shooter].root.position.x, 0, tgt.z - archers[P.m.shooter].root.position.z).normalize();
+  const birds = [];
+  for (let k = 0; k < 7; k++) { const b = pigeonModel(); b.userData.o = new V((Math.random() - 0.5) * 1.6, 4.5 + (Math.random() - 0.5) * 0.8, (Math.random() - 0.5) * 2.2 - (k % 3) * 0.6); b.scale.setScalar(0.9); scene.add(b); birds.push(b); }
+  S.fun.flocks = (S.fun.flocks || 0) + 1; sfx.coo();
+  anim(t => {
+    for (const b of birds) {
+      const along = (t - 0.75) * 12; b.position.copy(tgt).addScaledVector(dir, along + b.userData.o.z).add(new V(0, b.userData.o.y, 0)); b.position.x += dir.z * b.userData.o.x; b.position.z -= dir.x * b.userData.o.x;
+      b.rotation.y = Math.atan2(-dir.z, dir.x); b.userData.tick && b.userData.tick(t + b.userData.o.x);
+    }
+    if (t > 2.4) { birds.forEach(b => { b.removeFromParent(); dispose(b); }); return false; }
+  });
+}
+// status visuals: wraps, splats, disco balls, head sizes
+const status = { wrap: [null, null], splat: [null, null], disco: [null, null], discoT: 0 };
+function setWrap(i, on) {
+  const a = archers[i]; if (!a) return;
+  if (on && !status.wrap[i]) { const w = mummyWrap(); a.root.add(w); status.wrap[i] = w; anim(t => { w.scale.set(1, Math.min(1, t * 3), 1); return t < 0.4; }); }
+  else if (!on && status.wrap[i]) { const w = status.wrap[i]; status.wrap[i] = null; arena.puff(a.root.position.clone().add(new V(0, 1, 0)), 6, 0.35, undefined, 0.8, 0.6, 0.9); anim(t => { w.rotation.y = t * 12; w.scale.setScalar(Math.max(0.01, 1 - t * 1.6)); if (t > 0.6) { w.removeFromParent(); dispose(w); return false; } }); }
+}
+function setSplat(i, on) {
+  const a = archers[i]; if (!a) return;
+  if (on && !status.splat[i]) {
+    const g = new THREE.Group(), mat = toon(0xffffff);
+    for (const [x, y, z, s] of [[0.06, 0.32, 0.05, 0.11], [-0.08, 0.28, -0.06, 0.08], [0.02, 0.24, 0.16, 0.07], [0.12, 0.18, -0.08, 0.06]]) { const m = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), mat); m.position.set(x, y, z); m.scale.set(s, s * 0.45, s); g.add(m); }
+    a.head.add(g); status.splat[i] = g;
+  } else if (!on && status.splat[i]) { const g = status.splat[i]; status.splat[i] = null; g.removeFromParent(); dispose(g); }
+}
+function setDisco(i, on) {
+  if (on && !status.disco[i]) {
+    const b = discoBallModel(0.45), top = Math.max(3, ...arena.blocks.filter((m, k) => LAYOUT[k].s === i && m.visible).map(m => m.position.y));
+    b.position.set(TX(i), top + 3, 0); scene.add(b); status.disco[i] = b; S.fun.discos = (S.fun.discos || 0) + 1;
+  } else if (!on && status.disco[i]) {
+    const b = status.disco[i]; status.disco[i] = null; b.removeFromParent(); dispose(b);
+    arena.blocks.forEach((m, k) => { if (LAYOUT[k].s === i && m.material.emissive) m.material.emissive.setHex(0); });
+    if (S.st && S.st.phys && !S.play) arena.setBlocks(S.st.phys.b);
+  }
+}
+function applyStatus(fresh) { // sync visuals with S.st.fx / S.st.big (after each shot and at match start)
+  const st = S.st; if (!st) return;
+  const fx = st.fx || [emptyFx(), emptyFx()];
+  for (const i of [0, 1]) {
+    const f = fx[i] || emptyFx();
+    if (archers[i]) { archers[i].bigT = bigOf(st, i); if (fresh) archers[i].head.scale.setScalar(archers[i].bigT); }
+    setWrap(i, f.wrap > 0); setSplat(i, f.splat > 0); setDisco(i, f.disco > 0);
+  }
+  if ((status.disco[0] || status.disco[1]) && !sfx.discoOn() && !sfx.isMuted()) sfx.discoStart(60);
+  if (!status.disco[0] && !status.disco[1] && sfx.discoOn()) sfx.discoStop();
+}
+function clearStatus() { for (const i of [0, 1]) { setWrap(i, false); setSplat(i, false); setDisco(i, false); } if (sfx.discoOn()) sfx.discoStop(); }
+const splatted = () => S.phase === 'aim' && myTurn() && !!(S.st && S.st.fx && S.st.fx[S.turn] && S.st.fx[S.turn].splat > 0);
+function statusTick(dt) {
+  for (const a of archers) if (a && a.head) { const s = a.head.scale.x + (a.bigT - a.head.scale.x) * Math.min(1, dt * 6); a.head.scale.setScalar(s); }
+  const sp = splatted(), el = $('#splat'); if (el && el.classList.contains('hidden') === sp) el.classList.toggle('hidden', !sp);
+  if (!status.disco[0] && !status.disco[1]) return;
+  status.discoT += dt; const t = status.discoT;
+  if ((S.phase === 'aim' || S.phase === 'wait') && !sfx.discoOn() && !sfx.isMuted() && t - (status.musicTry || -9) > 3) { status.musicTry = t; sfx.discoStart(60); } // keep the beat going (retry at most every 3 s)
+  for (const i of [0, 1]) {
+    const ball = status.disco[i]; if (!ball) continue;
+    ball.userData.tick && ball.userData.tick(t);
+    const beat = Math.floor(t * 4);
+    arena.blocks.forEach((m, k) => {
+      if (LAYOUT[k].s !== i || !m.visible || !m.material.emissive) return;
+      m.material.emissive.setHSL(((beat + k * 0.37) % 6) / 6, 1, 0.28 + 0.12 * Math.max(0, Math.cos(t * Math.PI * 8)));
+      if (!S.play && S.st && S.st.phys) { const q = S.st.phys.b[k]; if (q && q[1] > 0.3) { const w = Math.sin(t * Math.PI * 2 + q[1] * 0.4) * 0.035 * Math.min(1.6, q[1] / 3); m.position.set(q[0], q[1] + Math.max(0, Math.sin(t * Math.PI * 4)) * 0.02, q[2] + w); } }
+    });
+    const a = archers[i]; if (a && !S.play && S.st) { const q = S.st.phys.a[i]; if (q) a.root.position.y = q[1] + Math.abs(Math.sin(t * Math.PI * 2)) * 0.12; }
+  }
+}
+function funFx(P, e, p) { // physics fx events for the v6.1 specials
+  const at = p.clone();
+  if (e.kind === 'boing') { sfx.boing(); S.fun.boings = (S.fun.boings || 0) + 1; arena.puff(at, 4, 0.3, undefined, 0.8, 0.5, 0.7); floatText('BOING!', at.clone().add(new V(0, 0.7, 0)), '#4fc3ff'); bouncySquash(e.i); }
+  else if (e.kind === 'slip') { sfx.squeak(); S.fun.slips = (S.fun.slips || 0) + 1; floatText('SLIP!', at.clone().add(new V(0, 1.6, 0)), '#ffe14a'); flash(`${nameOf(e.who)} slipped on a banana peel!`); }
+  else if (e.kind === 'pigeon') { sfx.splat(); S.fun.splats = (S.fun.splats || 0) + 1; setSplat(e.who, true); arena.puff(at.clone().add(new V(0, 1.7, 0)), 5, 0.22, undefined, 0.5, 0.3, 0.7); floatText('SPLAT!', at.clone().add(new V(0, 2.3, 0)), '#ffffff'); flash(`${nameOf(e.who)} got pooped on: aim guide splattered!`); }
+  else if (e.kind === 'toilet') { sfx.wrapUp(); S.fun.wraps = (S.fun.wraps || 0) + 1; setWrap(e.who, true); floatText('WRAPPED UP!', at.clone().add(new V(0, 2.3, 0)), '#ffffff'); flash(`${nameOf(e.who)} is wrapped up: skips next shot!`); }
+  else if (e.kind === 'bighead') { sfx.bigHead(); S.fun.bigs = (S.fun.bigs || 0) + 1; if (archers[e.who]) archers[e.who].bigT = 2; sparkle(scene, at.clone().add(new V(0, 1.8, 0)), 1.2); floatText('BIG HEAD!', at.clone().add(new V(0, 2.8, 0)), '#ff9ad5'); flash(`${nameOf(e.who)} has a BIG HEAD!`); }
+  else if (e.kind === 'disco') { if (e.n === 0) { setDisco(e.s, true); if (!sfx.isMuted()) sfx.discoStart(60); flash('DISCO FEVER!'); floatText('DISCO!', new V(TX(e.s), 5, 0), '#ff5ad1'); } }
+  else if (e.kind === 'granny') grannyStart(P, e);
+  else if (e.kind === 'smack') { sfx.smack(); S.fun.smacks = (S.fun.smacks || 0) + 1; shake = Math.max(shake, 0.3); if (P.granny) P.granny.smackK = P.run.k; arena.puff(new V(...e.t), 4, 0.3); floatText('WHACK!', at.clone().add(new V(0, 1.4, 0)), '#d9a6ff'); }
+}
+function grannyStart(P, e) {
+  const g = grandmaModel(), from = new V(...e.p), to = new V(...e.to), d = to.clone().sub(from).setY(0), h = d.length() || 1;
+  d.divideScalar(h); const stand = to.clone().addScaledVector(d, -0.55);
+  from.y = 0; stand.y = 0; g.position.copy(from); g.position.y = world.groundH(from.x, from.z); g.rotation.y = Math.atan2(-d.z, d.x); scene.add(g);
+  P.granny = { g, from, stand, k0: P.run.k, smackK: -1e9 }; S.fun.grannies = (S.fun.grannies || 0) + 1; sfx.grannyHey(); flash('Here comes Grandma!');
+}
+function grannyTick(P) {
+  const G = P.granny, R = ARROWS.grandma, u = Math.min(1, (P.run.k - G.k0) / Math.max(1, R.run - 1));
+  G.g.position.lerpVectors(G.from, G.stand, u);
+  G.g.position.y = world.groundH(G.g.position.x, G.g.position.z);
+  const s = (P.run.k - G.smackK) / 20;
+  if (u < 1) G.g.userData.run(P.run.k / 60); else if (s >= 0 && s <= 1) G.g.userData.smack(s); else G.g.userData.rest();
+}
+function grannyLeave(G) { // she hobbles back the way she came and fades out
+  const g = G.g, back = G.from.clone().sub(G.stand).setY(0).normalize(); g.rotation.y = Math.atan2(-back.z, back.x);
+  anim(t => { g.position.addScaledVector(back, 0.022); g.userData.run(t * 0.6); g.position.y = world.groundH(g.position.x, g.position.z) + Math.abs(Math.sin(t * 9)) * 0.03; if (t > 2) g.scale.setScalar(Math.max(0.01, 1 - (t - 2) * 2)); if (t > 2.5) { g.removeFromParent(); dispose(g); return false; } });
+}
 function flightFun(P, dt) { // squawks, honks and flops while the fun specials fly
   const type = P.m.sim.type;
   P.arrows.forEach((a, n) => {
     if (a.bounces) for (; P.bi[n] < a.bounces.length && P.ft >= a.bounces[P.bi[n]].t; P.bi[n]++) { // rubber chicken bounce
       const b = a.bounces[P.bi[n]], at = new V(...b.pos);
+      if (b.boing) { sfx.boing(); S.fun.boings = (S.fun.boings || 0) + 1; arena.puff(at, 4, 0.25, undefined, 0.8, 0.5, 0.7); floatText('BOING!', at.clone().add(new V(0, 0.6, 0)), '#4fc3ff'); bouncySquash(b.block); continue; }
       sfx.honk(); S.fun.honks++; arena.puff(at, 4, 0.25, undefined, 0.8, 0.5, 0.7); floatText('HONK!', at.clone().add(new V(0, 0.6, 0)), '#ffd84a'); shake = Math.max(shake, 0.12);
     }
   });
   if (type === 'chicken' && P.arrows.some(a => !a.landed && P.ft >= a.t0) && (P.squawkT -= dt) <= 0) { P.squawkT = 0.5 + Math.random() * 0.25; sfx.squawk(); S.fun.squawks++; }
   for (const a of P.arrows) if (a.m.userData.tick && !a.landed) a.m.userData.tick(P.ft);
+  for (const a of P.arrows) if (a.trail) a.trail.geometry.setDrawRange(0, 6 * Math.max(0, Math.min(a.pts.length - 1, Math.floor((P.ft - a.t0) * 60)) - 1));
+  for (const a of P.arrows) if (!a.landed && a.m.userData.gm) a.m.userData.gm.userData.run(P.ft);
   for (const a of P.arrows) if (a.m.userData.inner && a.m.userData.inner.userData.tick && !a.landed) a.m.userData.inner.userData.tick(P.ft);
 }
 function stepPhysics(P) {
@@ -391,7 +525,9 @@ function stepPhysics(P) {
     else if (e.kind === 'cow') { arena.puff(p, 16, 0.7, undefined, 2.6, 0.7, 1.6); arena.chunks(p, 10, new V(0, 2, 0)); sfx.stomp(); sfx.crumble(); shake = 0.9; flash('UDDERLY FLATTENED!'); P.focus = p; cowWander(P, p); }
     else if (e.kind === 'boot') { arena.puff(p, 22, 0.8, undefined, 3.2, 0.5, 1.8); arena.chunks(p, 12, new V(0, 3, 0)); sfx.stomp(); shake = 1.3; flash('STOMP!'); P.focus = p; }
     else if (e.kind === 'chair') { P.chair = P.arrows[0].m; P.chair.visible = true; sfx.whir(ARROWS.wheelchair.spin + 0.3); flash('WHEEEEE!'); }
+    else funFx(P, e, p);
   }
+  if (P.granny) grannyTick(P);
   if (P.chair && run.chair) {
     P.chair.position.copy(run.chair.position); P.chair.quaternion.copy(run.chair.quaternion);
     if (run.spin && run.k >= run.spin.start && run.k < run.spin.end) { // whirl: sparks + dust around the spinning chair
@@ -442,15 +578,20 @@ function endShot() {
   if (m.local) { // hot-seat: this machine is the authority
     const res = P.run.result(), next = finishShot(S.st, m.shooter, m.sim.type, m.sim, res, S.rand), winner = winnerOf(next.hp), score = [...S.score];
     if (winner >= 0) score[winner]++;
-    o = { st: { hp: next.hp, phys: next.phys, ammo: next.ammo, pickup: next.pickup, spawnIn: next.spawnIn }, got: next.got, winner, score, seriesWinner: seriesWinnerOf(score, S.best), turn: winner >= 0 ? 1 - winner : 1 - m.shooter, wind: randomWind() };
+    const st = roundState(next), nt = winner >= 0 ? { turn: 1 - winner, skipped: -1 } : nextTurn(st, m.shooter); // v6.1: a loo-roll-wrapped player skips a shot
+    o = { st, got: next.got, winner, score, seriesWinner: seriesWinnerOf(score, S.best), turn: nt.turn, skipped: nt.skipped, wind: randomWind() };
   } else o = m;
   S.lastDrift = blockDrift(o.st.phys.b); S.lastLog = [...P.run.log]; S.lastGot = o.got; S.lastSteps = P.run.k; S.lastPlayMs = performance.now() - P.t0;
   arena.setBlocks(o.st.phys.b); placeArchers(o.st.phys.a); // snap to the settled authoritative state (normally identical)
   if (P.chair) fading.push({ o: P.chair, t: 1 });
+  if (P.granny) grannyLeave(P.granny);
   showPickup(o.st.pickup, true);
   S.st = clone(o.st);
   for (const i of [0, 1]) if (ARROWS[S.types[i]].special && !(S.st.ammo[i][S.types[i]] > 0)) S.types[i] = 'normal';
   Object.assign(S, { hp: [...S.st.hp], turn: o.turn, wind: o.wind, play: null, aim: { pitch: 0.5, power: 0 } });
+  applyStatus(false);
+  S.lastSkipped = o.skipped == null ? -1 : o.skipped;
+  if (o.winner < 0 && S.lastSkipped >= 0) { const k = S.lastSkipped; flash(`${nameOf(k)} is wrapped up: turn skipped!`); floatText('SKIP!', archers[k].root.position.clone().add(new V(0, 2.4, 0)), '#ffffff'); }
   const mm = { winner: o.winner, seriesWinner: o.seriesWinner };
   if (mm.winner >= 0) S.score = [...o.score];
   if (mm.winner >= 0 && mm.seriesWinner < 0) { // round over: card, then the next round (loser shoots first; online the server sends it)
@@ -485,6 +626,7 @@ const preview = new THREE.Points(new THREE.BufferGeometry().setAttribute('positi
   noOutline(new THREE.PointsMaterial({ color: 0xffffff, size: 11, sizeAttenuation: false, map: dotTex(), alphaTest: 0.4, transparent: true, depthWrite: false })));
 preview.visible = false; scene.add(preview);
 function updatePreview() {
+  if (splatted()) { preview.visible = false; return; } // v6.1: pigeon-splattered players aim blind
   const { pos, vel } = launch(S.turn, S.aim, S.st.phys.a[S.turn], S.st.phys.a[1 - S.turn]), attr = preview.geometry.attributes.position, g = G * ARROWS[S.types[S.turn]].g, dt = 1 / 34;
   for (let k = 0; k < PREV_N; k++) {
     vel.y -= g * dt; pos.x += vel.x * dt; pos.y += vel.y * dt; pos.z += vel.z * dt;
@@ -533,7 +675,7 @@ const landMark = new THREE.Sprite(noOutline(new THREE.SpriteMaterial({ map: xTex
 const MARK_SIZE = 1.75; // ~2x the v5.4 X, pulses a little
 landMark.scale.setScalar(MARK_SIZE); landMark.visible = false; landMark.renderOrder = 23; scene.add(landMark);
 let guideKey = '';
-const guideOn = () => { const L = S.last[S.turn]; return !!L && S.phase === 'aim' && myTurn() && !S.play; };
+const guideOn = () => { const L = S.last[S.turn]; return !!L && S.phase === 'aim' && myTurn() && !S.play && !splatted(); };
 function updateGuide() {
   const on = guideOn(), L = on ? S.last[S.turn] : null;
   ghostLine.visible = on; landMark.visible = on && !!L.land; dashGlow.visible = dashCore.visible = on;
@@ -715,7 +857,7 @@ document.querySelectorAll('#arenas button').forEach(b => b.onclick = () => {
   if (b.dataset.a !== 'random') { setArena(b.dataset.a); S.arenaId = b.dataset.a; }
 });
 $('#hotBtn').onclick = () => { sfx.unlock(); startHot(); };
-$('#createBtn').onclick = () => { sfx.unlock(); net().emit('create', { arena: S.arenaChoice, look: myLook(), best: S.seriesChoice }); $('#homeMsg').textContent = 'Creating room…'; };
+$('#createBtn').onclick = () => { sfx.unlock(); net().emit('create', { arena: S.arenaChoice, look: myLook(), best: S.seriesChoice, bigHead: !!S.bigChoice }); $('#homeMsg').textContent = 'Creating room…'; };
 $('#joinBtn').onclick = () => {
   sfx.unlock();
   const code = $('#codeIn').value.trim().toUpperCase();
@@ -734,6 +876,8 @@ $('#shareBtn').onclick = () => {
   if (navigator.share) navigator.share({ title: 'Archery Duel', text: 'Duel me in Archery Duel!', url }).catch(() => {});
   else copyText(url).then(() => done('Link copied!'), () => { $('#lobbyMsg').textContent = url; });
 };
+function setBigChoice(v) { S.bigChoice = !!v; document.querySelectorAll('#funBtns button').forEach(b => b.classList.toggle('on', (b.dataset.big === '1') === S.bigChoice)); }
+$('#funBtns').onclick = e => { const b = e.target.closest('button'); if (b) setBigChoice(b.dataset.big === '1'); };
 $('#seriesBtns').onclick = e => { const v = +e.target.dataset.s; if (!v) return; S.seriesChoice = v; document.querySelectorAll('#seriesBtns button').forEach(b => b.classList.toggle('on', +b.dataset.s === v)); };
 $('#copyBtn').onclick = () => {
   const code = $('#code').textContent;
@@ -814,17 +958,17 @@ let sock = null;
 function net() {
   if (sock) return sock;
   sock = window.io();
-  sock.on('created', ({ code, best }) => {
-    $('#code').textContent = code; $('#lobbyBest').textContent = best > 1 ? `Best of ${best}` : 'Single match';
+  sock.on('created', ({ code, best, big }) => {
+    $('#code').textContent = code; $('#lobbyBest').textContent = (best > 1 ? `Best of ${best}` : 'Single match') + (big ? ' · BIG HEADS' : '');
     show('#home', false); openPanel('#lobby');
   });
   sock.on('joinError', msg => { show('#lobby', false); show('#home', true); $('#homeMsg').textContent = autoJoin ? `Couldn't join room ${autoJoin}: ${msg}.` : msg; autoJoin = null; });
-  sock.on('start', ({ arena: id, you, st, turn, wind, looks: ls, best, score, colors }) => {
-    autoJoin = null;
+  sock.on('start', ({ arena: id, you, st, turn, wind, looks: ls, best, score, colors, big }) => {
+    autoJoin = null; S.bigMatch = !!big;
     const m = { arenaId: id, mode: 'online', me: you, st, turn, wind, looks: ls, best, score, colors };
     if (S.mode === 'online' && (S.play || S.cardT > 0)) S.pending = m; else startMatch(m); // let the last shot and round card finish first
   });
-  sock.on('build', m => { autoJoin = null; enterBuild({ arenaId: m.arena, mode: 'online', me: m.you, turn: m.turn, looks: m.looks, best: m.best, score: m.score, time: m.time }); });
+  sock.on('build', m => { autoJoin = null; S.bigMatch = !!m.big; enterBuild({ arenaId: m.arena, mode: 'online', me: m.you, turn: m.turn, looks: m.looks, best: m.best, score: m.score, time: m.time }); });
   sock.on('buildError', ({ err, late }) => { S.lastBuildErr = err; if (S.phase !== 'build' || late) return; BS.sent = false; buildMsg(err, true); renderBuildUi(); });
   sock.on('planOk', ({ ready }) => { if (ready && S.phase === 'build') { BS.locked = true; renderBuildUi(); } });
   sock.on('oppReady', () => { BS.oppReady = true; renderBuildUi(); });
@@ -851,12 +995,16 @@ spotRing.visible = false; spotRing.renderOrder = 5; scene.add(spotRing);
 const buildGrid = new THREE.GridHelper(CELL * 6, 6, 0xffffff, 0xffffff); // the snap grid on the ground around your tower
 buildGrid.material.transparent = true; buildGrid.material.opacity = 0.55; buildGrid.material.depthWrite = false; buildGrid.visible = false; scene.add(buildGrid);
 const colHeight = (plan, gx, gz) => plan.blocks.reduce((n, c) => n + (c[0] === gx && c[1] === gz ? 1 : 0), 0);
-function withBlock(s, plan, cell) { // add a block on top of that column; if it lands under the archer, the archer climbs on top of it
+const pieceTool = () => (Object.hasOwn(PIECES, BS.tool) ? BS.tool : 'block');
+const kindsOf = plan => plan.kinds || plan.blocks.map(() => 'block');
+const pieceCount = (plan, k) => (k === 'block' ? plan.blocks.length : kindsOf(plan).filter(x => x === k).length);
+function withBlock(s, plan, cell, kind = pieceTool()) { // add a block on top of that column; if it lands under the archer, the archer climbs on top of it
   const c = [cell[0], cell[1], colHeight(plan, cell[0], cell[1])], before = BS.res[s] && BS.res[s].ok ? BS.res[s].archer[1] : 0;
   const colors = [...(plan.colors || plan.blocks.map(() => DEFAULT_BLOCK)), BS.color || DEFAULT_BLOCK]; // v5.3: the selected colour goes on the new block
-  let next = { blocks: [...plan.blocks, c], colors, archer: plan.archer }, r = validateBuild(s, next), climbed = false;
+  const kinds = [...kindsOf(plan), kind]; // v6.1: banana peel / bouncy castle pieces
+  let next = { blocks: [...plan.blocks, c], colors, kinds, archer: plan.archer }, r = validateBuild(s, next), climbed = false;
   if ((!r.ok && r.at < 0) || (r.ok && r.archer[1] > before + 1e-6)) { // the archer's spot rose (or became unstable): step onto the new block's centre
-    const up = { blocks: next.blocks, colors, archer: [2 * c[0] + 1, 2 * c[1] + 1] }, r2 = validateBuild(s, up);
+    const up = { blocks: next.blocks, colors, kinds, archer: [2 * c[0] + 1, 2 * c[1] + 1] }, r2 = validateBuild(s, up);
     if (r2.ok) { next = up; r = r2; climbed = true; }
   }
   return { next, r, climbed };
@@ -913,12 +1061,12 @@ $('#passSkip').onclick = () => quickHot(S.arenaId, BS.m.turn, [autoRes(0), autoR
 function buildMsg(t, err = false) { BS.msg = t; BS.err = err; const el = $('#bMsg'); el.textContent = t; el.classList.toggle('err', err); }
 function renderBuild() { // 3D: your own build (the other side stays hidden until the match starts)
   const s = BS.side, vis = [0, 1].map(i => (i === s && S.phase === 'build' ? BS.res[i] : EMPTY[i])), ph = initialPhys(vis); // the other side stays bare ground
-  arena.setBuildColors(vis.map(r => (r && r.colors) || null)); arena.resetBlocks(ph.b); placeArchers(ph.a);
+  arena.setBuildColors(vis.map(r => (r && r.colors) || null)); arena.resetBlocks(ph.b); setKinds(ph.k); placeArchers(ph.a);
   const g = BS.ghost;
   ghost.visible = !!(g && g.pos && S.phase === 'build');
   if (ghost.visible) { ghost.position.set(...g.pos); ghost.material = g.ok ? ghostMats.ok : ghostMats.bad; }
   spotRing.visible = S.phase === 'build' && BS.tool === 'archer';
-  buildGrid.visible = S.phase === 'build' && BS.tool === 'block' && !(BS.locked || BS.sent); buildGrid.position.set(TX(s), 0.03, 0);
+  buildGrid.visible = S.phase === 'build' && BS.tool !== 'archer' && !(BS.locked || BS.sent); buildGrid.position.set(TX(s), 0.03, 0);
   if (spotRing.visible) spotRing.position.set(ph.a[s][0], ph.a[s][1] + 0.03, ph.a[s][2]);
   renderBuildUi();
 }
@@ -929,7 +1077,11 @@ function renderBuildUi() {
   $('#bCount').textContent = `▦ ${plan.blocks.length}/${BUILD_MAX}`;
   $('#bUndo').disabled = lock || !BS.hist[s].length;
   $('#bConfirm').classList.toggle('hidden', !(BS.ghost && BS.ghost.ok) || lock);
-  document.querySelectorAll('#bTool button').forEach(b => { b.classList.toggle('on', b.dataset.tool === BS.tool); b.disabled = lock; });
+  document.querySelectorAll('#bTool button').forEach(b => {
+    b.classList.toggle('on', b.dataset.tool === BS.tool); b.disabled = lock;
+    const t = b.dataset.tool, c = b.querySelector('.cnt');
+    if (c && PIECES[t]) { const n = pieceCount(plan, t), mx = t === 'block' ? BUILD_MAX : PIECES[t].max; c.textContent = t === 'block' ? `${BUILD_MAX - n}` : `${mx - n}`; b.classList.toggle('out', n >= mx); }
+  });
   $('#bReady').textContent = BS.online ? (lock ? 'Waiting…' : 'Ready') : s ? 'Fight!' : 'Done';
   $('#bReady').disabled = lock; $('#bSkip').disabled = lock;
   document.querySelectorAll('#bColors button').forEach(b => { b.classList.toggle('on', b.dataset.c === BS.color); b.setAttribute('aria-checked', b.dataset.c === BS.color); b.disabled = lock; });
@@ -947,9 +1099,13 @@ function buildTry(cell) {
   const s = BS.side, plan = BS.plans[s];
   if (S.phase !== 'build' || BS.locked || BS.sent) return false;
   if (plan.blocks.length >= BUILD_MAX) { buildMsg('No blocks left (Undo to take one back)', true); return false; }
+  const kind = pieceTool();
+  if (kind !== 'block' && pieceCount(plan, kind) >= PIECES[kind].max) { buildMsg(`Only ${PIECES[kind].max} ${PIECES[kind].name.toLowerCase()} pieces`, true); return false; }
   const { next, r, climbed } = withBlock(s, plan, cell);
   if (!r.ok) { buildMsg(r.at < 0 ? 'That would bury your archer' : r.err, true); return false; }
-  setPlan(next, r); sfx.thunk(); buildMsg(`${climbed ? 'Archer climbed up' : 'Block placed'} · ${BUILD_MAX - next.blocks.length} left · tap again to stack`);
+  setPlan(next, r); if (kind === 'bouncy') sfx.boing(); else if (kind === 'banana') sfx.squeak(); else sfx.thunk();
+  buildMsg(`${climbed ? 'Archer climbed up' : kind === 'block' ? 'Block placed' : PIECES[kind].name + ' placed'} · ${BUILD_MAX - next.blocks.length} left · tap again to stack`);
+  if (kind !== 'block' && pieceCount(next, kind) >= PIECES[kind].max) { BS.tool = 'block'; buildMsg(`No ${PIECES[kind].name.toLowerCase()} pieces left · back to blocks`); renderBuild(); return true; }
   if (next.blocks.length < BUILD_MAX) { const w = withBlock(s, next, cell); if (w.r.ok) { BS.ghost = { cell, ok: true, pos: w.r.blocks.at(-1) }; renderBuild(); } }
   return true;
 }
@@ -963,6 +1119,8 @@ function buildArcherTry(spot) {
 function setGhost(cell) {
   const s = BS.side, plan = BS.plans[s];
   if (plan.blocks.length >= BUILD_MAX) { BS.ghost = null; buildMsg('No blocks left (Undo to take one back)', true); renderBuild(); return; }
+  const kind = pieceTool();
+  if (kind !== 'block' && pieceCount(plan, kind) >= PIECES[kind].max) { BS.ghost = null; buildMsg(`Only ${PIECES[kind].max} ${PIECES[kind].name.toLowerCase()} pieces`, true); renderBuild(); return; }
   const { r, climbed } = withBlock(s, plan, cell);
   BS.ghost = { cell, ok: r.ok, pos: r.ok ? r.blocks.at(-1) : r.pos || null };
   buildMsg(r.ok ? (climbed ? 'Archer will stand on it · tap again or Place' : 'Tap again or press Place') : r.at < 0 ? 'That would bury your archer' : r.err, !r.ok);
@@ -1013,9 +1171,11 @@ $('#bUndo').onclick = () => {
   if (BS.online && sock) sock.emit('plan', { plan: BS.plans[s], ready: false });
   buildMsg('Undone'); renderBuild();
 };
+$('#bTool').innerHTML = ['block', 'banana', 'bouncy', 'archer'].map(t => `<button data-tool="${t}" title="${PIECES[t] ? PIECES[t].name || 'Block' : 'Move archer'}${PIECES[t] ? ` (max ${PIECES[t].max})` : ''}">${PIECE_UI[t].icon}<small>${PIECE_UI[t].label}</small>${PIECES[t] ? '<em class="cnt"></em>' : ''}</button>`).join(''); // v6.1 build palette
 document.querySelectorAll('#bTool button').forEach(b => b.onclick = () => {
   BS.tool = b.dataset.tool; BS.ghost = null;
-  buildMsg(BS.tool === 'archer' ? 'Tap the ground or a block top to move your archer' : HINT); renderBuild();
+  const t = BS.tool;
+  buildMsg(t === 'archer' ? 'Tap the ground or a block top to move your archer' : t === 'banana' ? `Banana peel: archers slip off it (max ${PIECES.banana.max})` : t === 'bouncy' ? `Bouncy castle: arrows and archers bounce off it (max ${PIECES.bouncy.max})` : HINT); renderBuild();
 });
 $('#bColors').innerHTML = BLOCK_COLORS.map(c => `<button data-c="${c.id}" role="radio" aria-label="${c.name} blocks" title="${c.name}" style="background-color:${css(c.hex)}"></button>`).join('');
 function pickColor(id) { // v5.3: colour for the next blocks you place (blocks already placed keep theirs)
@@ -1058,6 +1218,8 @@ function updateHud() {
     const nm = document.createElement('span'); nm.textContent = nameOf(i);
     $(`#hp${i} .num`).replaceChildren(nm, ` ${S.hp[i]}`); // long names get an ellipsis, HP always shows
     $(`#hp${i} .you`).classList.toggle('hidden', !(online && i === S.me));
+    const f = (S.st && S.st.fx && S.st.fx[i]) || {}, tags = [f.splat > 0 && '💩', f.wrap > 0 && '🧻', f.disco > 0 && '🪩', S.st && bigOf(S.st, i) > 1 && (S.st.big ? 'BIG' : `BIG×${f.big}`)].filter(Boolean).join(' '); // v6.1 status effects
+    const fe = $(`#hp${i} .fxs`); if (fe && fe.textContent !== tags) fe.textContent = tags;
   });
   $('#turn').textContent = online && S.turn === S.me ? 'Your turn' : `${nameOf(S.turn)}'s turn`;
   $('#turn').style.background = css(cols[S.turn]);
@@ -1077,7 +1239,7 @@ function updateHud() {
     b.classList.toggle('hidden', n <= 0); b.querySelector('em').textContent = `×${n}`; specials += n > 0;
   });
   $('#types').classList.toggle('many', specials > 0);
-  const nBtn = document.querySelectorAll('#types button:not(.hidden)').length; $('#types').classList.toggle('lots', nBtn > 5); $('#types').style.setProperty('--n', nBtn);
+  const nBtn = document.querySelectorAll('#types button:not(.hidden)').length; $('#types').classList.toggle('lots', nBtn > 5); $('#types').classList.toggle('rows2', nBtn > 8); $('#types').style.setProperty('--n', nBtn); $('#types').style.setProperty('--c', nBtn > 8 ? Math.ceil(nBtn / 2) : nBtn);
   $('#hint').textContent = CAM.on ? 'Drag to look around · pinch or wheel to zoom' : S.phase === 'aim' && S.draw === 0 ? (mine ? 'Drag ↑↓ angle · ←→ power · release to shoot' : 'Opponent is aiming…') : '';
   $('#muteBtn').textContent = `Sound: ${sfx.isMuted() ? 'off' : 'on'}`;
 }
@@ -1181,7 +1343,7 @@ function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
   time += dt;
   if (S.play) updatePlay(dt);
-  tickAnims(dt);
+  tickAnims(dt); statusTick(dt);
   if (pickupObj) { const u = pickupObj.userData; u.tick(time); if (u.pop < 1) { u.pop = Math.min(1, u.pop + dt * 2.5); pickupObj.scale.setScalar(PICKUP_SCALE * Math.max(0.01, Math.sin(u.pop * Math.PI * 0.75) / Math.sin(Math.PI * 0.75))); } }
   for (let i = fading.length - 1; i >= 0; i--) { const f = fading[i]; f.t -= dt * 0.7; f.o.scale.setScalar(Math.max(0.01, f.t)); if (f.t <= 0) { f.o.removeFromParent(); fading.splice(i, 1); } }
   fpsN++; if (time - fpsT0 >= 1) { S.fps = fpsN / (time - fpsT0); fpsN = 0; fpsT0 = time; }
@@ -1344,6 +1506,15 @@ window.__game = {
   blocks: () => arena.blocks.map(m => [m.position.x, m.position.y, m.position.z, m.quaternion.x, m.quaternion.y, m.quaternion.z, m.quaternion.w]),
   get st() { return S.st; },
   playing: () => !!S.play,
+  // v6.1 FUN DROP 2 hooks
+  status: () => ({ fx: S.st && clone(S.st.fx), big: S.st && S.st.big, bigOf: [0, 1].map(i => (S.st ? bigOf(S.st, i) : 1)), headScale: archers.map(a => a.head.scale.x), bigT: archers.map(a => a.bigT),
+    wrapVis: status.wrap.map(Boolean), splatVis: status.splat.map(Boolean), discoVis: status.disco.map(Boolean), overlay: !$('#splat').classList.contains('hidden'), splatted: splatted(),
+    preview: preview.visible, guide: guideOn(), skipped: S.lastSkipped, discoMusic: sfx.discoOn(), granny: !!(S.play && S.play.granny), hpTags: [0, 1].map(i => $(`#hp${i} .fxs`).textContent) }),
+  buildTool: t => { const b = document.querySelector(`#bTool button[data-tool="${t}"]`); if (b) b.click(); return BS.tool; },
+  kinds: () => (S.phase === 'build' ? clone(BS.plans[BS.side].kinds || null) : S.st && clone(S.st.phys.k)),
+  decos: () => decos.map(d => ({ i: d.i, kind: d.kind, vis: !d.hide || !d.hide.material.visible })),
+  setBig: v => setBigChoice(v), get bigChoice() { return S.bigChoice; },
+  setFx: (i, f) => { Object.assign(S.st.fx[i], f); applyStatus(false); updateHud(); }, // tests/screenshots only (hot-seat)
   findBlockHit(ids, type = 'normal') { // aim whose first arrow hits one of the given block indices
     ids = [].concat(ids);
     for (let pd = 3; pd <= 45; pd += 1) for (let pw = 0.3; pw <= 1; pw += 0.004) {

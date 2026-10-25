@@ -222,3 +222,23 @@ button.icon { flex: none; width: 44px; height: 44px; padding: 0; border-radius: 
 #types.many.lots { gap: 5px; max-width: calc(100vw - 12px); flex-wrap: nowrap; }
 #types.many.lots button { width: calc(min(52px, (100vw - 24px) / var(--n) - 5px)); height: calc(min(52px, (100vw - 24px) / var(--n) - 5px)); }
 #types.many.lots button svg { width: 62%; height: 62%; }
+/* v6.1 FUN DROP 2 */
+.fxs { position: absolute; top: calc(100% - 4px); text-decoration: none; font-size: 12px; font-weight: 700; line-height: 16px; white-space: nowrap; color: #fff; -webkit-text-stroke: 0.6px var(--line); text-shadow: 0 1px 0 var(--line); pointer-events: none; }
+#hp0 .fxs { left: 38px; } #hp1 .fxs { right: 38px; }
+.fxs:empty { display: none; }
+#types.many.lots.rows2 { flex-wrap: wrap; justify-content: center; row-gap: 12px; max-width: min(100vw - 12px, 520px); }
+#types.many.lots.rows2 button { width: calc(min(52px, (100vw - 24px) / var(--c) - 6px)); height: calc(min(52px, (100vw - 24px) / var(--c) - 6px)); }
+#bTool button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; position: relative; padding: 2px 8px; min-width: 50px; }
+#bTool button svg { width: 24px; height: 24px; }
+#bTool button small { font-size: 10px; line-height: 1; }
+#bTool button em { position: absolute; top: 1px; right: 2px; font-style: normal; font-size: 10px; line-height: 13px; min-width: 13px; padding: 0 3px; border-radius: 8px; background: #2f6fe0; color: #fff; }
+#bTool button.out em { background: #999; }
+#bTool button.out:not(.on) { opacity: 0.55; }
+@media (max-width: 400px) { #bTool button { min-width: 44px; padding: 2px 5px; } }
+#splat { position: fixed; inset: 0; pointer-events: none; z-index: 3;
+  background: radial-gradient(ellipse 22% 15% at 28% 34%, #f6f6eecc 60%, #f6f6ee00 64%), radial-gradient(ellipse 13% 9% at 70% 26%, #f2f2e8bb 60%, #f2f2e800 64%), radial-gradient(ellipse 17% 12% at 62% 60%, #fafaf2c0 60%, #fafaf200 64%),
+    radial-gradient(ellipse 9% 7% at 40% 70%, #e9ecd6b0 60%, #e9ecd600 64%), radial-gradient(ellipse 6% 5% at 82% 48%, #fffffcb0 60%, #fffffc00 64%), radial-gradient(ellipse 8% 6% at 16% 58%, #eef0dcaa 60%, #eef0dc00 64%);
+  animation: splatIn .35s ease-out; }
+#splat::after { content: 'SPLAT! Aim guide hidden'; position: absolute; left: 50%; top: 28%; transform: translateX(-50%) rotate(-4deg); font-size: 20px; font-weight: 800; color: #fff; -webkit-text-stroke: 1.2px #2b2f45; text-shadow: 0 2px 0 #2b2f45; white-space: nowrap; }
+@keyframes splatIn { from { transform: scale(1.3); opacity: 0; } }
+#funBtns button { white-space: nowrap; }

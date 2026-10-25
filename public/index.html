@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="build" content="ad3t-v6.0">
+<meta name="build" content="ad3t-v6.1">
 <meta name="color-scheme" content="only light">
 <meta name="theme-color" content="#2f6fe0">
 <meta name="mobile-web-app-capable" content="yes">
@@ -21,9 +21,9 @@
 </head>
 <body>
 <div id="hud" class="hidden">
-  <div class="hp" id="hp0"><svg class="shield" viewBox="0 0 40 46"><path d="M20 2 37 8v14c0 12-8 19-17 22C11 41 3 34 3 22V8z" fill="#2f6fe0" stroke="#eef3fb" stroke-width="3.5" stroke-linejoin="round"/><path d="M10.5 27 12 15l4.5 5L20 12l3.5 8 4.5-5 1.5 12z" fill="#ffd23f" stroke="#7a4b00" stroke-width="1.6" stroke-linejoin="round"/></svg><div class="bar"><i></i><b class="num">100</b></div><em class="you hidden">you</em></div>
+  <div class="hp" id="hp0"><svg class="shield" viewBox="0 0 40 46"><path d="M20 2 37 8v14c0 12-8 19-17 22C11 41 3 34 3 22V8z" fill="#2f6fe0" stroke="#eef3fb" stroke-width="3.5" stroke-linejoin="round"/><path d="M10.5 27 12 15l4.5 5L20 12l3.5 8 4.5-5 1.5 12z" fill="#ffd23f" stroke="#7a4b00" stroke-width="1.6" stroke-linejoin="round"/></svg><div class="bar"><i></i><b class="num">100</b></div><s class="fxs"></s><em class="you hidden">you</em></div>
   <div id="mid"><div id="windTile"><svg id="windFlag" viewBox="0 0 40 40"><path d="M9 6v30" stroke="#6b4a2a" stroke-width="3.5" stroke-linecap="round"/><path d="M10 7c7-3 12 4 22 1-2 4-2 9 0 13-10 3-15-4-22-1z" fill="#3d8bff" stroke="#1d3f86" stroke-width="2" stroke-linejoin="round"/></svg><span id="windNum">0.0</span></div><div id="turn" class="blue">Blue's turn</div><div id="score" class="hidden"><span class="n0"></span><b>0 - 0</b><span class="n1"></span></div></div>
-  <div class="hp" id="hp1"><em class="you hidden">you</em><div class="bar"><i></i><b class="num">100</b></div><svg class="shield" viewBox="0 0 40 46"><path d="M20 2 37 8v14c0 12-8 19-17 22C11 41 3 34 3 22V8z" fill="#e0342c" stroke="#ffd23f" stroke-width="3.5" stroke-linejoin="round"/><path d="M10.5 27 12 15l4.5 5L20 12l3.5 8 4.5-5 1.5 12z" fill="#ffd23f" stroke="#7a4b00" stroke-width="1.6" stroke-linejoin="round"/></svg></div>
+  <div class="hp" id="hp1"><em class="you hidden">you</em><div class="bar"><i></i><b class="num">100</b></div><s class="fxs"></s><svg class="shield" viewBox="0 0 40 46"><path d="M20 2 37 8v14c0 12-8 19-17 22C11 41 3 34 3 22V8z" fill="#e0342c" stroke="#ffd23f" stroke-width="3.5" stroke-linejoin="round"/><path d="M10.5 27 12 15l4.5 5L20 12l3.5 8 4.5-5 1.5 12z" fill="#ffd23f" stroke="#7a4b00" stroke-width="1.6" stroke-linejoin="round"/></svg></div>
 </div>
 <button id="menuBtn" class="hidden" aria-label="Menu">☰</button>
 <button id="fsGame" class="fsBtn icon hidden" aria-label="Full screen"><svg class="fsIn" viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg><svg class="fsOut" viewBox="0 0 24 24"><path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/></svg></button>
@@ -65,6 +65,8 @@
   <div class="pb">
     <div class="lbl">Match</div>
     <div class="chips" id="seriesBtns"><button data-s="1" class="on">Single</button><button data-s="3">Best of 3</button><button data-s="5">Best of 5</button></div>
+    <div class="lbl">Fun</div>
+    <div class="chips" id="funBtns"><button data-big="0" class="on">Normal heads</button><button data-big="1">🤯 Big heads</button></div>
     <div class="lbl">Arena</div>
     <div class="chips" id="arenas"><button data-a="random" class="on">Random</button><button data-a="field">Sunny Field</button><button data-a="dusk">Stormy Dusk</button><button data-a="winter">Winter Siege</button></div>
     <div class="row2"><button id="customBtn">Customise</button><button id="helpBtn">How to play</button></div>
@@ -72,7 +74,7 @@
     <div id="homeMsg" class="msg"></div>
     <button id="installBtn" class="hidden"><svg viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M5 20h14"/></svg>Install app</button>
     <div id="installTip" class="tip hidden"></div>
-    <div class="build">ad3t-v6.0</div>
+    <div class="build">ad3t-v6.1</div>
   </div>
   <footer class="pf"><button id="hotBtn">Hot-seat</button><button id="createBtn">Create room</button></footer>
 </div>
@@ -142,5 +144,6 @@
   <footer class="pf"><button id="noticeBtn">Back to menu</button></footer>
 </div>
 <script type="module" src="game.js"></script>
+<div id="splat" class="hidden" aria-hidden="true"></div>
 </body>
 </html>

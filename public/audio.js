@@ -96,3 +96,23 @@ export function jingle() { // short victory tune
   [[262, 0], [392, 0.36], [523, 0.64]].forEach(([f, d]) => note('triangle', f, f, d, 0.3, 0.12));
 }
 export const sparkle = () => { if (!tag('sparkle')) return; [1568, 2093, 2637, 3136].forEach((f, k) => note('sine', f, f, k * 0.06, 0.35, 0.07)); };
+// v6.1 fun drop 2: banana squeak, pigeons, loo roll, disco loop, grandma handbag
+export const squeak = () => { if (!tag('squeak')) return; note('sine', 1200, 2400, 0, 0.12, 0.18); note('sine', 2400, 900, 0.12, 0.2, 0.15, null, 80, 30); };
+export const coo = () => { if (!tag('coo')) return; [0, 0.22, 0.5].forEach((d, k) => note('sine', 420 - k * 30, 330, d, 0.2, 0.12, bp(500, 2), 30, 18)); hiss(0.6, 0.05, 'bandpass', 1500, 2500, 2, 0.1); };
+export const splat = () => { if (!tag('splat')) return; hiss(0.18, 0.4, 'lowpass', 1200, 200, 1, 0.003); osc('sine', 260, 70, 0.15, 0.3); };
+export const unroll = () => { if (!tag('unroll')) return; hiss(0.7, 0.12, 'highpass', 3000, 5000, 1, 0.05); };
+export const wrapUp = () => { if (!tag('wrapUp')) return; [0, 0.1, 0.2, 0.3].forEach(d => note('triangle', 600, 900, d, 0.08, 0.08)); hiss(0.4, 0.15, 'highpass', 2500, 4000); };
+export const smack = () => { if (!tag('smack')) return; hiss(0.07, 0.6, 'bandpass', 1800, 900, 1.2, 0.002); osc('square', 160, 60, 0.1, 0.3, bp(500, 2)); };
+export const grannyHey = () => { if (!tag('grannyHey')) return; note('square', 700, 980, 0, 0.14, 0.08, bp(1300, 3), 20, 12); note('square', 980, 620, 0.16, 0.24, 0.08, bp(1200, 3), 30, 14); };
+export const bigHead = () => { if (!tag('bigHead')) return; note('sine', 200, 900, 0, 0.5, 0.2, null, 15, 10); };
+let disco = null; // disco loop: four-on-the-floor kick + offbeat hat + a little bassline, until discoStop()
+export function discoStart(secs = 8) {
+  tag('disco'); discoStop();
+  if (!ok()) return;
+  let n = 0; const bass = [110, 110, 165, 147];
+  const beat = () => { if (!ok()) return; osc('sine', 150, 45, 0.12, 0.5); setTimeout(() => ok() && hiss(0.04, 0.12, 'highpass', 7000, 6000), 125); note('square', bass[n % 4], bass[n % 4], 0, 0.2, 0.06, bp(400, 1)); n++; };
+  beat(); const id = setInterval(beat, 250), stop = setTimeout(discoStop, secs * 1000);
+  disco = { id, stop };
+}
+export function discoStop() { if (disco) { clearInterval(disco.id); clearTimeout(disco.stop); disco = null; } }
+export const discoOn = () => !!disco;
