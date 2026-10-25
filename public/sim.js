@@ -31,14 +31,15 @@ export const parked = q => q[1] < PARK_Y / 2;
 // builds[s] = validated build-phase result { blocks: [[x,y,z]...], archer: [x,y,z] }: that side's classic tower is parked and the player's
 // own tower (built from the ground up) is used instead. null = the classic 41-block tower (legacy layout, kept for the regression suites).
 export function initialPhys(builds = null) {
-  const b = LAYOUT.map(l => [...l.pos, 0, 0, 0, 1]), a = [[-DIST, WALL_H, 0], [DIST, WALL_H, 0]];
+  const b = LAYOUT.map(l => [...l.pos, 0, 0, 0, 1]), a = [[-DIST, WALL_H, 0], [DIST, WALL_H, 0]], k = { banana: [], bouncy: [] }; // k: v6.1 special build pieces (block indices)
   if (builds) for (const s of [0, 1]) {
     const B = builds[s]; if (!B) continue;
     LAYOUT.forEach((l, i) => { if (l.s === s && l.kind !== 'build') b[i] = [l.pos[0], PARK_Y, l.pos[2], 0, 0, 0, 1]; });
     B.blocks.forEach((p, n) => { b[BUILD_SLOT0[s] + n] = [p[0], p[1], p[2], 0, 0, 0, 1]; });
     a[s] = [...B.archer];
+    (B.kinds || []).forEach((kd, n) => { if (kd === 'banana' || kd === 'bouncy') k[kd].push(BUILD_SLOT0[s] + n); });
   }
-  return { b, a };
+  return { b, a, k };
 }
 // ---------- build phase (once per match / series): each player builds their own tower from the ground up ----------
 // Blocks snap to a 0.8 m grid: a 6x6-column zone on your own side (centred where the classic tower stood, flat ground, far from the
@@ -48,6 +49,9 @@ export function initialPhys(builds = null) {
 export const BUILD_GRID = 3, ARCHER_GRID = 5, BUILD_LEVELS = 8, BUILD_TOP = BUILD_LEVELS * CELL, BUILD_TIME = 60;
 export const BUILD_SLOT0 = [0, 1].map(s => LAYOUT.findIndex(l => l.s === s && l.kind === 'build'));
 export const defaultPlan = () => ({ blocks: [], colors: [], archer: [0, 0] });
+// v6.1 special build pieces (count toward BUILD_MAX): banana peel (archers who end up on it after a hit/fall slip) and bouncy castle
+// (arrows bounce off it, anything landing on it gets bounced up). plan.kinds = optional per-block kind, validated with these limits.
+export const PIECES = { block: { max: BUILD_MAX }, banana: { max: 2, name: 'Banana peel' }, bouncy: { max: 3, name: 'Bouncy castle' } };
 // Skip / quick play: a ready-made 30-block tower (2x2 keep, 6 high, plus a 2x1x3 front buttress), archer on the keep top (4.8 m).
 export function autoPlan(s, color = DEFAULT_BLOCK) {
   const blocks = [], front = s ? -2 : 1;
@@ -74,6 +78,9 @@ export function validateBuild(s, plan) {
   if (plan.blocks.length > BUILD_MAX) return fail(`Only ${BUILD_MAX} blocks`);
   const cl = plan.colors; // v5.3: optional per-block colour ids (missing = sandstone), only from the palette
   if (cl !== undefined && (!Array.isArray(cl) || cl.length !== plan.blocks.length || !cl.every(isBlockColor))) return fail('Bad block colour');
+  const kd = plan.kinds; // v6.1: optional per-block piece kind
+  if (kd !== undefined && (!Array.isArray(kd) || kd.length !== plan.blocks.length || !kd.every(x => Object.hasOwn(PIECES, x)))) return fail('Bad build piece');
+  if (kd) for (const x of ['banana', 'bouncy']) if (kd.filter(y => y === x).length > PIECES[x].max) return fail(`Only ${PIECES[x].max} ${PIECES[x].name.toLowerCase()} pieces`);
   const H = LAYOUT[BUILD_SLOT0[s]].half, boxes = [], out = [], cols = new Map();
   for (let n = 0; n < plan.blocks.length; n++) {
     const c = plan.blocks[n];
@@ -90,7 +97,7 @@ export function validateBuild(s, plan) {
   if (!Array.isArray(a) || !isInt(a[0], -ARCHER_GRID, ARCHER_GRID) || !isInt(a[1], -ARCHER_GRID, ARCHER_GRID)) return fail('Archer must stay in your build zone');
   const ax = towerX(s) + a[0] * 0.4, az = a[1] * 0.4, sf = surface(boxes, ax, az, ARCHER_HALF[0], ARCHER_HALF[2]);
   if (!sf.on) return { ...fail('Archer needs solid stone underfoot'), pos: out.at(-1) };
-  return { ok: true, blocks: out, colors: plan.blocks.map((_, n) => (cl ? cl[n] : DEFAULT_BLOCK)), archer: [rd(ax), rd(sf.top), rd(az)] };
+  return { ok: true, blocks: out, colors: plan.blocks.map((_, n) => (cl ? cl[n] : DEFAULT_BLOCK)), kinds: plan.blocks.map((_, n) => (kd ? kd[n] : 'block')), archer: [rd(ax), rd(sf.top), rd(az)] };
 }
 function inBlock(b, h, p, m = 0.03) { // point inside an oriented box (inverse-rotate by the quaternion)
   const dx = p.x - b[0], dy = p.y - b[1], dz = p.z - b[2], qx = -b[3], qy = -b[4], qz = -b[5], qw = b[6];
@@ -112,7 +119,21 @@ export const ARROWS = {
   cow: { name: 'Cow', dmg: [10, 10], push: 0, g: 1.35, wind: 0.2, special: true, land: 'cow', radius: 3, power: 18, cowDmg: 24 },
   // boot: a giant boot drops from the sky onto the landing spot (or the enemy tower at the aim line) `delay` steps later and stomps.
   boot: { name: 'Giant Boot', dmg: [8, 8], push: 6, g: 1, wind: 0.8, special: true, land: 'boot', radius: 2.4, power: 22, bootDmg: 20, delay: 36 },
+  // v6.1 fun drop 2 (effects resolved in physics.js shotEvents + funEffects below; statuses live in st.fx[i]).
+  // pigeon: wherever it lands, a flock flies over the enemy and poops on them: small damage + splattered aim (no preview / guide) next turn.
+  pigeon: { name: 'Pigeons', dmg: [6, 8], push: 4, g: 0.9, wind: 1.1, special: true, land: 'pigeon', delay: 45, pigeonDmg: 6 },
+  // toilet roll: a direct hit or a landing within `radius` of the enemy wraps them up: they skip their next shot.
+  toilet: { name: 'Toilet Roll', dmg: [6, 9], push: 5, g: 1, wind: 1, special: true, land: 'toilet', radius: 2.4, wrapDmg: 5 },
+  // disco: the enemy tower flashes and dances (small periodic shoves) for this shot and their whole next turn.
+  disco: { name: 'Disco', dmg: [5, 5], push: 4, g: 1, wind: 0.8, special: true, land: 'disco', pulses: 12, every: 20, sway: 0.18 },
+  // big head: the enemy's head grows (2x hitbox, head hits +25%) for your next 2 shots.
+  bighead: { name: 'Big Head', dmg: [5, 5], push: 4, g: 1, wind: 0.8, special: true, land: 'bighead', turns: 2 },
+  // grandma: lands, runs to the enemy tower and smacks its base with her handbag (strong pushes), then hobbles off.
+  grandma: { name: 'Grandma', dmg: [6, 6], push: 4, g: 1.2, wind: 0.5, special: true, land: 'grandma', run: 80, smacks: 4, every: 34, power: 7, smackDmg: 3 },
 };
+export const BIG_HEAD = 2, NECK_Y = 1.25; // big-head scale (head pivots at the neck)
+export const bigOf = (st, i) => (st && (st.big || (st.fx && st.fx[i] && st.fx[i].big > 0)) ? BIG_HEAD : 1);
+export const emptyFx = () => ({ splat: 0, wrap: 0, disco: 0, big: 0 });
 export const SPECIALS = Object.keys(ARROWS).filter(k => ARROWS[k].special);
 export const BASIC = Object.keys(ARROWS).filter(k => !ARROWS[k].special);
 export const emptyAmmo = () => Object.fromEntries(SPECIALS.map(k => [k, 0]));
@@ -154,9 +175,9 @@ export function makeWorld(id) {
   return { id: ARENAS[id] ? id : 'field', A, groundH, riverX, trees: tr, tents, rocks, treb, solid };
 }
 
-export function archerHit(ap, p) { // chunky, big-headed archer whose feet are at ap = [x, y, z]
+export function archerHit(ap, p, big = 1) { // chunky, big-headed archer whose feet are at ap = [x, y, z]; big = v6.1 head scale
   const r2d = (p.x - ap[0]) ** 2 + (p.z - ap[2]) ** 2, y = p.y - ap[1];
-  if ((y - 1.55) ** 2 + r2d < 0.36 ** 2) return 'head';
+  if ((y - (NECK_Y + 0.3 * big)) ** 2 + r2d < (0.36 * big) ** 2) return 'head';
   if (y > 0 && y < 1.25 && r2d < 0.34 ** 2) return 'body';
   return null;
 }
@@ -182,7 +203,7 @@ function towerBoxes(b) { // loose AABB per side, for a cheap early-out
 }
 function collide(world, p, shooter, st, t, tb, pickupTaken) {
   const a = st.phys.a;
-  for (let i = 0; i < 2; i++) if (i !== shooter) { const part = archerHit(a[i], p); if (part) return { kind: part, who: i }; }
+  for (let i = 0; i < 2; i++) if (i !== shooter) { const part = archerHit(a[i], p, bigOf(st, i)); if (part) return { kind: part, who: i }; }
   if (st.pickup && !pickupTaken && Math.hypot(p.x - st.pickup.pos[0], p.y - st.pickup.pos[1], p.z - st.pickup.pos[2]) < PICKUP_R) return { kind: 'pickup', pickup: st.pickup.kind };
   for (let s = 0; s < 2; s++) { // own tower blocks are ignored right after release (you shoot over your own parapet)
     if (s === shooter && t < 0.35) continue;
@@ -197,7 +218,7 @@ function collide(world, p, shooter, st, t, tb, pickupTaken) {
 }
 // st = { phys: { b, a }, pickup }. Returns { type, arrows: [{ t0, pts: [[x,y,z] every 1/60 s], res: { kind, who?, block?, pickup?, dmg, pos, dir, t } }] }
 export function simulateShot(world, shooter, aim, wind, type = 'normal', st = { phys: initialPhys(), pickup: null }) {
-  const T = ARROWS[type] || ARROWS.normal, DT = 1 / 240, out = [], tb = towerBoxes(st.phys.b);
+  const T = ARROWS[type] || ARROWS.normal, DT = 1 / 240, out = [], tb = towerBoxes(st.phys.b), bouncy = new Set((st.phys.k && st.phys.k.bouncy) || []);
   const { pos, vel } = launch(shooter, aim, st.phys.a[shooter], st.phys.a[1 - shooter]);
   const queue = [{ t0: 0, p: pos, v: vel, child: false }];
   let taken = false;
@@ -216,6 +237,16 @@ export function simulateShot(world, shooter, aim, wind, type = 'normal', st = { 
         }
       }
       const hit = collide(world, p, shooter, st, t, tb, taken);
+      if (hit && hit.kind === 'block' && bouncy.has(hit.block) && bounces.filter(x => x.boing).length < 2 && Math.hypot(v.x, v.y, v.z) > 2) {
+        // v6.1 bouncy castle: every projectile bounces off it (boing), keeps 80% of its speed
+        const sp = Math.hypot(v.x, v.y, v.z), nrm = bounceNormal(hit, p, v, st), dot = v.x * nrm[0] + v.y * nrm[1] + v.z * nrm[2];
+        bounces.push({ kind: 'block', block: hit.block, boing: true, pos: [r2(p.x), r2(p.y), r2(p.z)], dir: [v.x / sp, v.y / sp, v.z / sp].map(r2), t: r2(t) });
+        if (dot < 0) { v.x -= 2 * dot * nrm[0]; v.y -= 2 * dot * nrm[1]; v.z -= 2 * dot * nrm[2]; }
+        v.x *= 0.8; v.y = Math.max(v.y * 0.8, 3); v.z *= 0.8;
+        p.x = px; p.y = py; p.z = pz;
+        if (n % 4 === 0) pts.push([r2(p.x), r2(p.y), r2(p.z)]);
+        continue;
+      }
       if (hit && T.bounces && bounces.length < T.bounces && ['block', 'stone', 'ground'].includes(hit.kind) && Math.hypot(v.x, v.y, v.z) > 3) {
         // rubber chicken: reflect off the surface (deterministic, same on server and clients) and keep flying
         const sp = Math.hypot(v.x, v.y, v.z), nrm = bounceNormal(hit, p, v, st), dot = v.x * nrm[0] + v.y * nrm[1] + v.z * nrm[2];
@@ -229,7 +260,8 @@ export function simulateShot(world, shooter, aim, wind, type = 'normal', st = { 
       if (hit) {
         if (hit.kind === 'pickup') taken = true;
         const sp = Math.hypot(v.x, v.y, v.z);
-        res = { ...hit, dmg: hit.who !== undefined ? T.dmg[hit.kind === 'head' ? 1 : 0] : 0,
+        const big = hit.who !== undefined && hit.kind === 'head' && bigOf(st, hit.who) > 1; // v6.1: big-head hits +25%
+        res = { ...hit, dmg: hit.who !== undefined ? Math.round(T.dmg[hit.kind === 'head' ? 1 : 0] * (big ? 1.25 : 1)) : 0, ...(big ? { big: true } : {}),
           pos: [r2(p.x), r2(p.y), r2(p.z)], dir: [v.x / sp, v.y / sp, v.z / sp].map(r2), speed: r2(sp), t: r2(t) };
         pts.push(res.pos);
       } else if (n % 4 === 0) pts.push([r2(p.x), r2(p.y), r2(p.z)]);
@@ -247,7 +279,7 @@ export function simulateShot(world, shooter, aim, wind, type = 'normal', st = { 
     }
     out.push(arrow);
   }
-  return { type: ARROWS[type] ? type : 'normal', arrows: out };
+  return { type: ARROWS[type] ? type : 'normal', shooter, arrows: out };
 }
 function bounceNormal(hit, p, v, st) { // surface normal for a bounce: ground = up, block = its face nearest the hit point, scenery = straight back
   if (hit.kind === 'ground') return [0, 1, 0];
@@ -276,9 +308,32 @@ export function finishShot(prev, shooter, type, shot, phys, rand) {
   }
   for (const i of [0, 1]) hp[i] = Math.max(0, hp[i] - (phys.dmg[i] || 0));
   if (!pickup && !got && --spawnIn <= 0) { pickup = spawnPickup(rand); spawnIn = spawnDelay(rand); }
-  return { hp, ammo, pickup, spawnIn, got, phys: phys.phys };
+  return { hp, ammo, pickup, spawnIn, got, phys: phys.phys, fx: funEffects(prev, shooter, type, shot), big: prev.big || 0 };
 }
-export const newRound = (rand, builds = null) => ({ hp: [HP, HP], phys: initialPhys(builds), ammo: [emptyAmmo(), emptyAmmo()], pickup: null, spawnIn: spawnDelay(rand) });
+// v6.1 status effects per player (st.fx[i]): splat (pigeon: no aim preview on their next turn), wrap (toilet roll: skip their next
+// shot), disco (their tower dances through their next shot), big (big head: for the shooter's next `turns` shots at them).
+export const wrapHit = (prev, shooter, shot) => { // toilet roll: direct hit, or a landing near the enemy (pre-shot position)
+  const e = 1 - shooter, ap = prev.phys.a[e], R = ARROWS.toilet.radius;
+  return shot.arrows.some(a => a.res.who === e || (a.res.kind !== 'out' && a.res.kind !== 'pickup' && Math.hypot(a.res.pos[0] - ap[0], a.res.pos[1] - ap[1] - 0.8, a.res.pos[2] - ap[2]) < R));
+};
+export function funEffects(prev, shooter, type, shot) {
+  const fx = (prev.fx || [emptyFx(), emptyFx()]).map(f => ({ ...emptyFx(), ...f })), me = fx[shooter], en = fx[1 - shooter];
+  me.splat = 0; me.disco = 0; // their effects lasted for this, their own shot
+  en.big = Math.max(0, en.big - 1); // one of your shots at the big head used up
+  if (type === 'pigeon') en.splat = 1;
+  if (type === 'disco') en.disco = 1;
+  if (type === 'bighead') en.big = ARROWS.bighead.turns;
+  if (type === 'toilet' && wrapHit(prev, shooter, shot)) en.wrap = 1;
+  return fx;
+}
+// Whose turn is next: normally the other player; a wrapped-up player skips once (the wrap is used up). Mutates st.fx.
+export function nextTurn(st, shooter) {
+  const o = 1 - shooter;
+  if (st.fx && st.fx[o] && st.fx[o].wrap > 0) { st.fx[o].wrap = 0; return { turn: shooter, skipped: o }; }
+  return { turn: o, skipped: -1 };
+}
+export const roundState = n => ({ hp: n.hp, phys: n.phys, ammo: n.ammo, pickup: n.pickup, spawnIn: n.spawnIn, fx: n.fx, big: n.big }); // what's carried between shots
+export const newRound = (rand, builds = null, opts = {}) => ({ hp: [HP, HP], phys: initialPhys(builds), ammo: [emptyAmmo(), emptyAmmo()], pickup: null, spawnIn: spawnDelay(rand), fx: [emptyFx(), emptyFx()], big: opts.big ? 1 : 0 });
 export const winnerOf = hp => (hp[0] <= 0 ? 1 : hp[1] <= 0 ? 0 : -1);
 // Series: Single (1), Best of 3 or Best of 5. Returns the series winner or -1.
 export const SERIES = [1, 3, 5];
