@@ -8,7 +8,8 @@ fs.mkdirSync(out, { recursive: true });
 const b = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', headless: 'new', args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required'] });
 const errors = [], sleep = ms => new Promise(r => setTimeout(r, ms)), results = [];
 const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); results.push('ok ' + m); console.log('ok', m); };
-const shot = (pg, name) => pg.screenshot({ captureBeyondViewport: false, path: `${out}/${pre}-${name}.png` });
+const shot = (pg, name) => { const v = pg.viewport(); return pg.screenshot({ captureBeyondViewport: false, path: `${out}/${pre}-${name.replace(/\d+x\d+$/, v.width + 'x' + v.height)}.png` }); }; // file name follows the real viewport
+const SZ = process.env.V60_LAND ? [740, 360] : [360, 640]; // V60_LAND=1: hot-seat gameplay shots in landscape
 const DEG = Math.PI / 180;
 async function open(w, h, ctx = b, url = base, pre = null) {
   const pg = await ctx.newPage();
@@ -70,7 +71,7 @@ if (which !== 'online') {
   await pc.close();
 
   // ---------------- 2. hot-seat: Red is Baldy Mordy ----------------
-  const pg = await open(360, 640, b, base, "localStorage.setItem('ad3t-look-1', JSON.stringify({ name: 'Baldy Mordy' })); localStorage.removeItem('ad3t-look-0');");
+  const pg = await open(SZ[0], SZ[1], b, base, "localStorage.setItem('ad3t-look-1', JSON.stringify({ name: 'Baldy Mordy' })); localStorage.removeItem('ad3t-look-0');");
   await pg.click('#arenas button[data-a="field"]'); await pg.click('#seriesBtns button[data-s="3"]');
   await pg.evaluate(() => { __game.startHot('field', 0); __game.setWind(0, 0); }); await sleep(1500);
   bl = await BAL(pg);
@@ -92,7 +93,7 @@ if (which !== 'online') {
   lay = await layout(pg);
   assert(lay.bad.length === 0 && await noScroll(pg), `hud 740x360: 8 ammo slots fit (${lay.bad})`);
   await shot(pg, 'hud-8-slots-740x360');
-  await pg.setViewport({ width: 360, height: 640, isMobile: true, hasTouch: true, deviceScaleFactor: 1 }); await sleep(500);
+  await pg.setViewport({ width: SZ[0], height: SZ[1], isMobile: true, hasTouch: true, deviceScaleFactor: 1 }); await sleep(500);
 
   // ---------------- 3. rubber chicken ----------------
   let aim = await findAim(pg, 'chicken', CHICKEN_BLOCK);
@@ -167,7 +168,7 @@ if (which !== 'online') {
   const v1 = await VIC(pg);
   await shot(pg, 'ragdoll-360x640');
   assert(v1.lrot > 0.6 && Math.hypot(v1.lp[0] - v.lp[0], v1.lp[2] - v.lp[2]) > 0.3, `victory: loser tumbles off in slow-mo (tilt ${v1.lrot.toFixed(2)})`);
-  await sleep(1600);
+  await pg.waitForFunction(() => __game.victory() && __game.victory().t > 2.6, { timeout: 15000, polling: 30 }); // dance phase (focus switches to the winner at 2.1s)
   const v2 = await VIC(pg); await sleep(120); const v3 = await VIC(pg);
   await shot(pg, 'dance-360x640');
   assert(JSON.stringify(v2.wrot) !== JSON.stringify(v3.wrot) || v2.wp[1] !== v3.wp[1], 'victory: winner is dancing (pose changes frame to frame)');
@@ -240,7 +241,7 @@ if (which !== 'hot') {
   let won = false;
   for (const type of ['chicken', 'chicken', 'cow', 'cow', 'boot', 'boot', 'normal', 'normal', 'normal', 'normal', 'normal', 'normal']) {
     const [P, Q] = await who();
-    const aim = type === 'normal' ? await P.evaluate(() => __game.findHit('normal')) : await findAim(P, type, type === 'chicken' ? CHICKEN_BLOCK : ENEMY_BLOCK);
+    const aim = type === 'normal' ? await P.evaluate(() => __game.findHit('normal')) : (await findAim(P, type, type === 'chicken' ? CHICKEN_BLOCK : ENEMY_BLOCK) || await P.evaluate(t => __game.findHit(t), type)); // fallback: blocks next to the enemy may already be gone
     assert(aim, `online ${type}: aim found`);
     await P.evaluate((a, t) => __game.shootAim(a, t), aim, type);
     await Q.waitForFunction(t => __game.S.play && __game.S.play.m.sim.type === t, { timeout: 10000, polling: 30 }, type);
