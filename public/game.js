@@ -334,7 +334,7 @@ function giantBoot(r, P) { // a giant boot falls out of the sky onto the landing
   const g = bootModel(5.2); g.position.set(at.x - 1.6 * f, top, at.z); g.rotation.y = f > 0 ? 0 : Math.PI; g.traverse(o => { o.castShadow = true; }); scene.add(g);
   const shadow = new THREE.Mesh(new THREE.CircleGeometry(2.6, 28), noOutline(new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthWrite: false })));
   shadow.rotation.x = -Math.PI / 2; shadow.position.set(at.x, world.groundH(at.x, at.z) + 0.05, at.z); scene.add(shadow);
-  S.fun.boot = { pos: r.bootAt, g };
+  S.fun.boot = { pos: r.bootAt, g }; P.dropAt = at.clone().add(new V(0, 3, 0)); // v6.0: the camera watches the boot come down
   const a = anim(t => {
     const u = Math.min(1, t / dur);
     g.position.y = top - (top - at.y) * u * u; g.rotation.z = (1 - u) * 0.35 * f;
@@ -1093,9 +1093,10 @@ function camTarget(t) {
   const cv = myView(); if (cv) return camPose(cv); // v5.5: the chosen view holds through aiming, the whole shot and the opponent's turn (no follow cam)
   const v = viewer(), fv = archers[v].f;
   let lead = S.play ? playLead() : null, focus = lead ? lead.m.getWorldPosition(new V()) : S.phase === 'over' ? S.focus : null;
-  if (S.play && S.play.focus) focus = S.play.focus;
+  if (S.play && S.play.focus) focus = S.play.focus; else if (S.play && S.play.dropAt) focus = S.play.dropAt;
   if (focus) {
     const fs = S.play ? archers[S.play.m.shooter].f : fv, P = S.play;
+    if (P && !P.focus && P.dropAt && !P.arrows.some(x => !x.landed)) { const por = camera.aspect < 0.9 ? 1.5 : 1; return [P.dropAt.clone().add(new V(-6 * fs * por, 1.5 * por, 13 * fv * por)), P.dropAt.clone().add(new V(0, 2.5, 0))]; } // v6.0: boot coming down
     if (P && !P.arrows.some(x => !x.landed)) { // impact: pull back so the whole tower (and anyone falling) is in shot
       const f = new V(focus.x, clamp(focus.y, 2.2, 4), 0), por = camera.aspect < 0.9 ? 1.5 : 1;
       return [f.clone().add(new V(-5.5 * fs * por, 3.2 * por, 10.5 * fv * por)), f.clone().add(new V(0, -0.6, 0))];
@@ -1427,4 +1428,4 @@ function victoryCam(t) { // first the loser's tumble, then the winner's dance
   for (let k = 0, b; k < 60 && (b = blockAt(c)); k++) c.y = b.max.y + 0.05; // never inside a block
   return [c, p.clone().add(new V(0, 1.1, 0))];
 }
-const victoryFocus = () => { const v = S.victory; if (!v || S.play || !['round', 'over'].includes(S.phase)) return null; return archers[v.t < 2.1 ? v.l : v.w]; };
+function victoryFocus() { const v = S.victory; if (!v || S.play || !['round', 'over'].includes(S.phase)) return null; return archers[v.t < 2.1 ? v.l : v.w]; }
