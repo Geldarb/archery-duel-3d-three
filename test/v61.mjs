@@ -216,6 +216,10 @@ if (which !== 'hot') {
   await fire('normal', HIT_ENEMY);
   await Promise.all([A, Bp].map(X => waitFun(X, 'slips'))); await sleep(300); await shot(A, 'online-slip-A'); await shot(Bp, 'online-slip-B');
   await both(); await sleep(400); await sync('banana slip');
+  if (process.env.V61_LIVE) { // live has no TEST_AMMO: specials can't be fired online there; check one more synced shot instead
+    await fire('normal', HIT_ENEMY); await Promise.all([A, Bp].map(X => settle(X))); await sleep(400); await sync('return shot');
+    await shot(A, 'online-return-A'); await shot(Bp, 'online-return-B');
+  } else {
   // red: pigeon
   let [P, Q] = await fire('pigeon', ANY_LAND);
   await Promise.all([A, Bp].map(X => waitFun(X, 'splats'))); await sleep(200); await shot(A, 'online-pigeon-A'); await shot(Bp, 'online-pigeon-B');
@@ -244,6 +248,7 @@ if (which !== 'hot') {
   await both(); await sleep(400); await sync('grandma');
   const fa = await Promise.all([A, Bp].map(X => F(X)));
   assert(fa.every(f => f.smacks === 4 && f.grannies === 1), 'online grandma: 4 smacks on both clients');
+  }
 }
 console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no console errors');
 assert(errors.length === 0, 'no page errors');
