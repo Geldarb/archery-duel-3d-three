@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { HP, ARROWS, ARENA_IDS, SHOULDER, SPECIALS, LAYOUT, BUILD_MAX, CELL, BUILD_TIME, BUILD_LEVELS, DIST, validateBuild, defaultPlan, autoPlan, seriesWinnerOf, makeWorld, simulateShot, finishShot, newRound, rng, winnerOf, randomWind, launch, facing, yawOf, initialPhys, G, bigOf, nextTurn, roundState, emptyFx, NECK_Y, PIECES } from './sim.js';
+import { HP, ARROWS, ARENA_IDS, SHOULDER, SPECIALS, LAYOUT, BUILD_MAX, CELL, BUILD_TIME, BUILD_LEVELS, DIST, validateBuild, defaultPlan, autoPlan, seriesWinnerOf, makeWorld, simulateShot, finishShot, newRound, rng, winnerOf, randomWind, launch, facing, yawOf, initialPhys, G, bigOf, nextTurn, roundState, emptyFx, NECK_Y, PIECES, canFire, isJesus } from './sim.js';
 import { PhysRun, shotEvents, STEP } from './physics.js';
 import { SPECIAL_UI, PIECE_UI, pickupModel, bootModel, pigeonModel, discoBallModel, grandmaModel, peelDeco, bouncyDeco, mummyWrap } from './specials.js';
 import { buildArena, heraldry, toon, noOutline } from './world.js';
@@ -103,6 +103,11 @@ function makeArcher(i, look, color, parent = scene) { // chunky big-headed carto
   const head = new THREE.Group(); head.position.y = NECK_Y; // v6.1: everything above the neck scales for Big Head mode
   for (const o of [...root.children]) if (o.position.y > 1.2) { o.position.y -= NECK_Y; head.add(o); }
   root.add(head);
+  const jesus = isJesus(look); let halo = null; // v6.2 easter egg: a player named 'jesus' wears a little halo (and may fire every special)
+  if (jesus) {
+    halo = new THREE.Mesh(new THREE.TorusGeometry(0.27, 0.04, 8, 30), new THREE.MeshBasicMaterial({ color: 0xffe36b })); halo.rotation.x = Math.PI / 2;
+    halo.position.y = 2.12 - NECK_Y; head.add(halo);
+  }
   const quiver = add(new THREE.CylinderGeometry(0.12, 0.1, 0.58, 12), baldy ? robe : leather, -0.3, 0.92, 0.12); quiver.rotation.set(0.25, 0, -0.35);
   add(new THREE.TorusGeometry(0.12, 0.025, 6, 14), wood, 0, 0.29, 0, quiver).rotation.x = Math.PI / 2;
   const fl = mat(fletch); fl.side = THREE.DoubleSide;
@@ -136,7 +141,7 @@ function makeArcher(i, look, color, parent = scene) { // chunky big-headed carto
   parent.add(root);
   root.userData.baldy = baldy;
   const a = {
-    root, f, fletch, baldy, aim, head, bigT: 1,
+    root, f, fletch, baldy, jesus, halo, aim, head, bigT: 1,
     pose(pitch, draw, showArrow, type) {
       aim.rotation.set(0, 0, pitch);
       if (type && nocked.userData.type !== type) { aim.remove(nocked); nocked = makeArrow(type, fletch); nocked.userData.type = type; aim.add(nocked); }
@@ -187,7 +192,7 @@ const stuck = [];
 
 // ---------- state ----------
 const S = { last: [null, null], mode: 'menu', phase: 'menu', me: 0, turn: 0, hp: [HP, HP], st: newRound(Math.random), rand: Math.random, wind: { x: 0, z: 0 }, aim: { pitch: 0.5, power: 0 }, draw: 0,
-  types: ['normal', 'normal'], bigChoice: false, bigMatch: false, seriesChoice: 1, best: 1, score: [0, 0], seriesWinner: -1, pending: null, cardT: 0, arenaChoice: 'random', arenaId: 'field', play: null, queue: [], winner: -1, focus: null };
+  types: ['normal', 'normal'], bigChoice: false, bigMatch: false, swapChoice: false, swapMatch: false, seriesChoice: 1, best: 1, score: [0, 0], seriesWinner: -1, pending: null, cardT: 0, arenaChoice: 'random', arenaId: 'field', play: null, queue: [], winner: -1, focus: null };
 const viewer = () => (S.mode === 'online' ? S.me : S.turn);
 const myTurn = () => S.phase === 'aim' && (S.mode === 'hot' || S.turn === S.me);
 
@@ -240,7 +245,7 @@ function startMatch({ arenaId, mode, me = 0, turn = 0, st = null, wind, looks: l
   fading.length = 0;
   clearAnims(); resetVictoryPose();
   S.rand = rng((Math.random() * 2 ** 32) >>> 0); // hot-seat power-up spawns (online: the server's seeded rng)
-  st = clone(st || newRound(S.rand, builds, { big: S.bigMatch })); // every round of a series resets to the layout built at its start
+  st = clone(st || newRound(S.rand, builds, { big: S.bigMatch, swap: S.swapMatch, jesus: ls.map(isJesus) })); // every round of a series resets to the layout built at its start
   S.builds = builds;
   S.colors = colors || (builds ? builds.map(b => (b && b.colors) || null) : null); // v5.3: per-block colours (online: from the server each round)
   arena.setBuildColors(S.colors); arena.resetBlocks(st.phys.b); setKinds(st.phys.k); placeArchers(st.phys.a); pickupKey = '-'; showPickup(st.pickup, false);
@@ -256,15 +261,20 @@ function startMatch({ arenaId, mode, me = 0, turn = 0, st = null, wind, looks: l
   show('#restart', mode === 'hot');
   $('#homeBtn').textContent = mode === 'online' ? 'Leave room' : 'Main menu';
   camJump = true; applyStatus(true); updateHud();
-  if (fromBuild) flash(st.big ? 'Towers revealed! BIG HEADS!' : 'Towers revealed!');
+  if (fromBuild) flash(`Towers revealed!${st.big ? ' BIG HEADS!' : ''}${st.swap ? ' Arrow Becomes You!' : ''}`);
+  else if (st.swap && !score[0] && !score[1]) flash('Arrow Becomes You: you land where your arrow does!');
   if (score[0] + score[1] === 0 && archers.some(a => a.baldy)) { // reveal the easter-egg wizard with a sparkle at the start of a series
     for (const a of archers) if (a.baldy) sparkle(scene, a.root.position.clone().add(new V(0, 1.3, 0)), 1.3);
     sfx.sparkle(); S.baldyRevealed = (S.baldyRevealed || 0) + 1;
   }
+  if (score[0] + score[1] === 0 && archers.some(a => a.jesus)) { // v6.2: halo reveal
+    for (const a of archers) if (a.jesus) sparkle(scene, a.root.position.clone().add(new V(0, 2.1, 0)), 1);
+    sfx.choir(); S.jesusRevealed = (S.jesusRevealed || 0) + 1;
+  }
 }
 const pickArena = () => (S.arenaChoice === 'random' ? ARENA_IDS[Math.floor(Math.random() * ARENA_IDS.length)] : S.arenaChoice);
-const quickHot = (arenaId = pickArena(), turn = 0, builds = null) => (S.bigMatch = S.bigChoice, startMatch({ arenaId, mode: 'hot', wind: randomWind(), turn, best: S.seriesChoice, builds })); // a new series, no build phase
-const startHot = (arenaId = pickArena(), turn = 0) => (S.bigMatch = S.bigChoice, enterBuild({ arenaId, mode: 'hot', turn, best: S.seriesChoice })); // a new series starts with the build phase
+const quickHot = (arenaId = pickArena(), turn = 0, builds = null) => (S.bigMatch = S.bigChoice, S.swapMatch = S.swapChoice, startMatch({ arenaId, mode: 'hot', wind: randomWind(), turn, best: S.seriesChoice, builds })); // a new series, no build phase
+const startHot = (arenaId = pickArena(), turn = 0) => (S.bigMatch = S.bigChoice, S.swapMatch = S.swapChoice, enterBuild({ arenaId, mode: 'hot', turn, best: S.seriesChoice })); // a new series starts with the build phase
 function goHome() {
   if (S.mode === 'online' && sock) sock.emit('leave');
   Object.assign(S, { mode: 'menu', phase: 'menu', play: null, queue: [], pending: null, cardT: 0, last: [null, null] }); endBuildUi(); camExit(true); resetViews(); clearStatus();
@@ -283,7 +293,7 @@ function notice(msg) {
 function fire() {
   const aim = { ...S.aim };
   let type = S.types[S.turn];
-  if (ARROWS[type].special && !(S.st.ammo[S.turn][type] > 0)) type = 'normal';
+  if (!canFire(S.st, S.turn, type)) type = 'normal';
   preview.visible = false; $('#readout').textContent = '';
   if (S.mode === 'online') { S.phase = 'wait'; sock.emit('shoot', { aim, type }); updateHud(); return; }
   playShot({ shooter: S.turn, aim, sim: simulateShot(world, S.turn, aim, S.wind, type, S.st), local: true }); // hot-seat: physics + outcome are resolved locally in endShot
@@ -298,6 +308,7 @@ function playShot(m) {
   S.play = { arrows, ft: 0, hold: 1.0, m, run, fxi: 0, logi: 0, focus: null, chair: null, vy: new Float32Array(LAYOUT.length), puffs: 0, t0: performance.now() };
   S.phase = 'fly'; S.draw = 0; preview.visible = false;
   sfx.twang(); sfx.whoosh(Math.max(...arrows.map(a => a.res.t)) * 0.8);
+  if (m.sim.noWarp) setTimeout(() => { if (S.play && S.play.m === m) flash(m.sim.noWarp === 'pickup' ? 'Power-up grabbed: no swap this time' : 'Arrow lost: no swap!'); S.fun.noWarp = m.sim.noWarp; }, Math.max(...arrows.map(a => a.res.t)) * 1000); // v6.2
   if (m.sim.type === 'cow') sfx.moo();
   if (m.sim.type === 'chicken') sfx.squawk();
   if (m.sim.type === 'toilet') { sfx.unroll(); arrows.forEach(a => looTrail(a)); }
@@ -335,7 +346,7 @@ function land(a) {
   } else if (r.kind === 'stone') sfx.crack();
   else if (r.kind !== 'out' && !sp) sfx.thunk();
 }
-const LOG_TEXT = { pigeon: ['#f4f4f4', ''], toilet: ['#fbfbf4', ''], smack: ['#d9a6ff', ''], ground: ['#ff8a5c', 'Fell to the ground!'], fall: ['#ffd0a0', 'Took a tumble!'], debris: ['#fff', ''], blast: ['#ff6a3a', ''], spin: ['#9ad0ff', ''], cow: ['#fff3c4', ''], boot: ['#ffb36b', ''] };
+const LOG_TEXT = { pigeon: ['#f4f4f4', ''], toilet: ['#fbfbf4', ''], smack: ['#d9a6ff', ''], ground: ['#ff8a5c', 'Fell to the ground!'], fall: ['#ffd0a0', 'Took a tumble!'], debris: ['#fff', ''], blast: ['#ff6a3a', ''], spin: ['#9ad0ff', ''], cow: ['#fff3c4', ''], boot: ['#ffb36b', ''], bonk: ['#ffe14a', ''] };
 // ---------- v6.0 fun specials: client visuals only (gameplay is in sim.js / physics.js, identical on every machine) ----------
 function giantBoot(r, P) { // a giant boot falls out of the sky onto the landing spot and stomps (the physics 'boot' event lands at the same moment)
   const T = ARROWS.boot, at = new V(...r.bootAt), top = at.y + 22, dur = T.delay / 60, f = archers[P.m.shooter].f;
@@ -474,6 +485,12 @@ function funFx(P, e, p) { // physics fx events for the v6.1 specials
   else if (e.kind === 'bighead') { sfx.bigHead(); S.fun.bigs = (S.fun.bigs || 0) + 1; if (archers[e.who]) archers[e.who].bigT = 2; sparkle(scene, at.clone().add(new V(0, 1.8, 0)), 1.2); floatText('BIG HEAD!', at.clone().add(new V(0, 2.8, 0)), '#ff9ad5'); flash(`${nameOf(e.who)} has a BIG HEAD!`); }
   else if (e.kind === 'disco') { if (e.n === 0) { setDisco(e.s, true); if (!sfx.isMuted()) sfx.discoStart(60); flash('DISCO FEVER!'); floatText('DISCO!', new V(TX(e.s), 5, 0), '#ff5ad1'); } }
   else if (e.kind === 'granny') grannyStart(P, e);
+  else if (e.kind === 'warp') { // v6.2 Arrow Becomes You: poof out, whoosh, poof in where the arrow landed
+    const from = new V(...e.from).add(new V(0, 0.9, 0)); arena.puff(from, 10, 0.5, undefined, 1.6, 0.5, 1.1); arena.puff(at.clone().add(new V(0, 0.9, 0)), 12, 0.55, undefined, 1.6, 0.5, 1.1);
+    sparkle(scene, at.clone().add(new V(0, 1, 0)), 0.8); sfx.poof(); sfx.whoosh(0.4); S.fun.warps = (S.fun.warps || 0) + 1;
+    if (P.arrows[0] && P.arrows[0].m && P.m.sim.type === 'normal') P.arrows[0].m.visible = false; // the arrow became you
+    floatText('POOF!', at.clone().add(new V(0, 2.3, 0)), '#ffffff');
+  } else if (e.kind === 'bonk') { sfx.bonk(); S.fun.bonks = (S.fun.bonks || 0) + 1; shake = Math.max(shake, 0.4); arena.puff(at.clone().add(new V(0, 1.6, 0)), 5, 0.3); floatText('BONK!', at.clone().add(new V(0, 2.6, 0)), '#ffe14a'); flash(`${nameOf(e.by)} BONKS ${nameOf(e.who)}!`); }
   else if (e.kind === 'smack') { sfx.smack(); S.fun.smacks = (S.fun.smacks || 0) + 1; shake = Math.max(shake, 0.3); if (P.granny) P.granny.smackK = P.run.k; arena.puff(new V(...e.t), 4, 0.3); floatText('WHACK!', at.clone().add(new V(0, 1.4, 0)), '#d9a6ff'); }
 }
 function grannyStart(P, e) {
@@ -588,7 +605,7 @@ function endShot() {
   if (P.granny) grannyLeave(P.granny);
   showPickup(o.st.pickup, true);
   S.st = clone(o.st);
-  for (const i of [0, 1]) if (ARROWS[S.types[i]].special && !(S.st.ammo[i][S.types[i]] > 0)) S.types[i] = 'normal';
+  for (const i of [0, 1]) if (!canFire(S.st, i, S.types[i])) S.types[i] = 'normal';
   Object.assign(S, { hp: [...S.st.hp], turn: o.turn, wind: o.wind, play: null, aim: { pitch: 0.5, power: 0 } });
   applyStatus(false);
   S.lastSkipped = o.skipped == null ? -1 : o.skipped;
@@ -858,7 +875,7 @@ document.querySelectorAll('#arenas button').forEach(b => b.onclick = () => {
   if (b.dataset.a !== 'random') { setArena(b.dataset.a); S.arenaId = b.dataset.a; }
 });
 $('#hotBtn').onclick = () => { sfx.unlock(); startHot(); };
-$('#createBtn').onclick = () => { sfx.unlock(); net().emit('create', { arena: S.arenaChoice, look: myLook(), best: S.seriesChoice, bigHead: !!S.bigChoice }); $('#homeMsg').textContent = 'Creating room…'; };
+$('#createBtn').onclick = () => { sfx.unlock(); net().emit('create', { arena: S.arenaChoice, look: myLook(), best: S.seriesChoice, bigHead: !!S.bigChoice, swap: !!S.swapChoice }); $('#homeMsg').textContent = 'Creating room…'; };
 $('#joinBtn').onclick = () => {
   sfx.unlock();
   const code = $('#codeIn').value.trim().toUpperCase();
@@ -877,8 +894,9 @@ $('#shareBtn').onclick = () => {
   if (navigator.share) navigator.share({ title: 'Archery Duel', text: 'Duel me in Archery Duel!', url }).catch(() => {});
   else copyText(url).then(() => done('Link copied!'), () => { $('#lobbyMsg').textContent = url; });
 };
-function setBigChoice(v) { S.bigChoice = !!v; document.querySelectorAll('#funBtns button').forEach(b => b.classList.toggle('on', (b.dataset.big === '1') === S.bigChoice)); }
-$('#funBtns').onclick = e => { const b = e.target.closest('button'); if (b) setBigChoice(b.dataset.big === '1'); };
+function setBigChoice(v) { S.bigChoice = !!v; document.querySelectorAll('#funBtns button[data-big]').forEach(b => b.classList.toggle('on', (b.dataset.big === '1') === S.bigChoice)); }
+function setSwapChoice(v) { S.swapChoice = !!v; $('#swapBtn').classList.toggle('on', S.swapChoice); $('#swapBtn').setAttribute('aria-pressed', S.swapChoice); } // v6.2 mode toggle
+$('#funBtns').onclick = e => { const b = e.target.closest('button'); if (!b) return; if (b.id === 'swapBtn') setSwapChoice(!S.swapChoice); else setBigChoice(b.dataset.big === '1'); };
 $('#seriesBtns').onclick = e => { const v = +e.target.dataset.s; if (!v) return; S.seriesChoice = v; document.querySelectorAll('#seriesBtns button').forEach(b => b.classList.toggle('on', +b.dataset.s === v)); };
 $('#copyBtn').onclick = () => {
   const code = $('#code').textContent;
@@ -959,17 +977,17 @@ let sock = null;
 function net() {
   if (sock) return sock;
   sock = window.io();
-  sock.on('created', ({ code, best, big }) => {
-    $('#code').textContent = code; $('#lobbyBest').textContent = (best > 1 ? `Best of ${best}` : 'Single match') + (big ? ' · BIG HEADS' : '');
+  sock.on('created', ({ code, best, big, swap }) => {
+    $('#code').textContent = code; $('#lobbyBest').textContent = (best > 1 ? `Best of ${best}` : 'Single match') + (big ? ' · BIG HEADS' : '') + (swap ? ' · Arrow Becomes You' : '');
     show('#home', false); openPanel('#lobby');
   });
   sock.on('joinError', msg => { show('#lobby', false); show('#home', true); $('#homeMsg').textContent = autoJoin ? `Couldn't join room ${autoJoin}: ${msg}.` : msg; autoJoin = null; });
-  sock.on('start', ({ arena: id, you, st, turn, wind, looks: ls, best, score, colors, big }) => {
-    autoJoin = null; S.bigMatch = !!big;
+  sock.on('start', ({ arena: id, you, st, turn, wind, looks: ls, best, score, colors, big, swap }) => {
+    autoJoin = null; S.bigMatch = !!big; S.swapMatch = !!swap;
     const m = { arenaId: id, mode: 'online', me: you, st, turn, wind, looks: ls, best, score, colors };
     if (S.mode === 'online' && (S.play || S.cardT > 0)) S.pending = m; else startMatch(m); // let the last shot and round card finish first
   });
-  sock.on('build', m => { autoJoin = null; S.bigMatch = !!m.big; enterBuild({ arenaId: m.arena, mode: 'online', me: m.you, turn: m.turn, looks: m.looks, best: m.best, score: m.score, time: m.time }); });
+  sock.on('build', m => { autoJoin = null; S.bigMatch = !!m.big; S.swapMatch = !!m.swap; enterBuild({ arenaId: m.arena, mode: 'online', me: m.you, turn: m.turn, looks: m.looks, best: m.best, score: m.score, time: m.time }); });
   sock.on('buildError', ({ err, late }) => { S.lastBuildErr = err; if (S.phase !== 'build' || late) return; BS.sent = false; buildMsg(err, true); renderBuildUi(); });
   sock.on('planOk', ({ ready }) => { if (ready && S.phase === 'build') { BS.locked = true; renderBuildUi(); } });
   sock.on('oppReady', () => { BS.oppReady = true; renderBuildUi(); });
@@ -1236,8 +1254,8 @@ function updateHud() {
   document.querySelectorAll('#types button').forEach(b => {
     b.classList.toggle('on', b.dataset.t === S.types[S.turn]);
     if (!b.classList.contains('special')) return;
-    const n = (S.st.ammo[S.turn] || {})[b.dataset.t] || 0;
-    b.classList.toggle('hidden', n <= 0); b.querySelector('em').textContent = `×${n}`; specials += n > 0;
+    const n = (S.st.ammo[S.turn] || {})[b.dataset.t] || 0, inf = !!(S.st.jesus && S.st.jesus[S.turn]); // v6.2: jesus picks from every special, unlimited
+    b.classList.toggle('hidden', n <= 0 && !inf); b.querySelector('em').textContent = inf ? '∞' : `×${n}`; specials += n > 0 || inf;
   });
   $('#types').classList.toggle('many', specials > 0);
   const nBtn = document.querySelectorAll('#types button:not(.hidden)').length; $('#types').classList.toggle('lots', nBtn > 5); $('#types').classList.toggle('rows2', nBtn > 8); $('#types').style.setProperty('--n', nBtn); $('#types').style.setProperty('--c', nBtn > 8 ? Math.ceil(nBtn / 2) : nBtn);
@@ -1436,11 +1454,14 @@ document.querySelectorAll('.cyc').forEach(c => c.querySelectorAll('button').forE
   setLook({ [k]: list[(i + d + list.length) % list.length][0] });
 }));
 $('#nameIn').oninput = () => {
-  const was = isBaldy(cLook), n = cleanName($('#nameIn').value, '');
+  const was = isBaldy(cLook), wasJ = isJesus(cLook), n = cleanName($('#nameIn').value, '');
   cLook = sanitizeLook({ ...cLook, name: n || ['Blue', 'Red'][cSlot] }, cSlot); saveLook(cSlot, cLook);
   if (isBaldy(cLook) !== was) { // v6.0: live easter-egg swap in the preview
     renderCustom();
     if (isBaldy(cLook)) { sparkle(pvScene, new V(0, 1.1, 0), 1.1, 'pv'); sfx.sparkle(); S.pvSparkles = (S.pvSparkles || 0) + 1; }
+  } else if (isJesus(cLook) !== wasJ) { // v6.2: halo + every special
+    renderCustom();
+    if (isJesus(cLook)) { sparkle(pvScene, new V(0, 2, 0), 1, 'pv'); sfx.choir(); S.pvHalos = (S.pvHalos || 0) + 1; }
   }
 };
 $('#nameIn').onblur = () => { $('#nameIn').value = cLook.name; };
@@ -1515,6 +1536,11 @@ window.__game = {
   kinds: () => (S.phase === 'build' ? clone(BS.plans[BS.side].kinds || null) : S.st && clone(S.st.phys.k)),
   decos: () => decos.map(d => ({ i: d.i, kind: d.kind, vis: !d.hide || !d.hide.material.visible })),
   setBig: v => setBigChoice(v), get bigChoice() { return S.bigChoice; },
+  setSwap: v => setSwapChoice(v), get swapChoice() { return S.swapChoice; }, // v6.2
+  feet: () => archers.map(a => a.root.position.toArray().map(v => Math.round(v * 100) / 100)),
+  jesus: () => ({ archers: archers.map(a => !!a.jesus), halo: archers.map(a => !!(a.halo && a.halo.visible)), st: S.st && S.st.jesus, preview: pvArcher ? !!pvArcher.jesus : null, pvHalos: S.pvHalos || 0, revealed: S.jesusRevealed || 0,
+    picker: [...document.querySelectorAll('#types button.special:not(.hidden)')].map(b => [b.dataset.t, b.querySelector('em').textContent]) }),
+  pickType(t) { const b = document.querySelector(`#types button[data-t="${t}"]`); if (b && !b.classList.contains('hidden')) b.click(); return S.types[S.turn]; },
   setFx: (i, f) => { Object.assign(S.st.fx[i], f); applyStatus(false); updateHud(); }, // tests/screenshots only (hot-seat)
   findBlockHit(ids, type = 'normal') { // aim whose first arrow hits one of the given block indices
     ids = [].concat(ids);

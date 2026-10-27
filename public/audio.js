@@ -116,3 +116,7 @@ export function discoStart(secs = 8) {
 }
 export function discoStop() { if (disco) { clearInterval(disco.id); clearTimeout(disco.stop); disco = null; } }
 export const discoOn = () => !!disco;
+// v6.2: Arrow Becomes You (whoosh-poof teleport, melee bonk) and the halo egg's little choir
+export const poof = () => { if (!tag('poof')) return; hiss(0.35, 0.35, 'bandpass', 600, 3200, 1.5, 0.01); note('sine', 300, 1200, 0, 0.22, 0.16); };
+export const bonk = () => { if (!tag('bonk')) return; note('square', 260, 120, 0, 0.12, 0.2, bp(700, 2)); note('sine', 520, 500, 0.02, 0.2, 0.12); };
+export const choir = () => { if (!tag('choir')) return; [523, 659, 784].forEach((f, k) => note('sine', f, f, k * 0.02, 1.1, 0.06)); };
