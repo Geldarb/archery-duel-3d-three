@@ -1,7 +1,7 @@
 // Shared rigid-body tower physics (cannon-es). Runs identically on the server (authoritative) and in the browser (live playback / hot-seat).
 // A run is rebuilt from a snapshot at the start of every shot and driven by a list of timed events derived from the shot's arrows.
 import * as C from 'cannon-es';
-import { LAYOUT, ARROWS, ARCHER_HALF, parked, wrapHit } from './sim.js';
+import { LAYOUT, ARROWS, ARCHER_HALF, parked, wrapHit, WARP } from './sim.js';
 
 export const STEP = 1 / 60, SETTLE = 180, MAX_STEPS = 60 * 26;
 const CHAIR_HALF = 0.36, CHAIR_DELAY = 20;
@@ -43,6 +43,7 @@ export function shotEvents(shot, st = null) {
     if (T.land === 'boot' && r.bootAt) ev.push({ k: k + T.delay, kind: 'boot', p: r.bootAt, R: T.radius, V: T.power, D: T.bootDmg, land: k });
     if (T.land === 'spin') ev.push({ k, kind: 'chair', p: r.pos.map((x, n) => x - r.dir[n] * 0.4), v: r.dir.map(d => -d * 2), i: r.kind === 'block' ? r.block : -1, hit: r.pos, dir: r.dir });
   }
+  if (shot.warp) ev.push({ k: shot.warp.k, kind: 'warp', who: shot.warp.who, from: shot.warp.from, p: shot.warp.p }); // v6.2 Arrow Becomes You
   return ev.sort((x, y) => x.k - y.k);
 }
 
@@ -159,6 +160,7 @@ export class PhysRun {
       if (Math.hypot(a.position.x - t[0], a.position.z - t[2]) < 1.3 && a.position.y - ARCHER_HALF[1] < 1) { a.wakeUp(); a.velocity.set(ux * 2.5, 1.5, uz * 2.5); this.jolted[e.s] = true; this.hurt(e.s, G.smackDmg, 'smack', this.feet(e.s)); }
       this.fx.push({ k: this.k, kind: 'smack', s: e.s, n: e.n, p: hp, t });
     }
+    else if (e.kind === 'warp') this.warp(e);
     else if (e.kind === 'blast') {
       for (const b of [...this.live, ...this.archers]) {
         const d = b.position.vsub(p), dist = d.length();
@@ -197,6 +199,29 @@ export class PhysRun {
       c.material = this.stone; c.velocity.copy(v); this.world.addBody(c); c.allowSleep = false;
       this.spin = { start: this.k + CHAIR_DELAY, end: this.k + CHAIR_DELAY + ARROWS.wheelchair.spin * 60, ticks: 0 };
       this.fx.push({ k: this.k, kind: 'chair', p: e.p });
+    }
+  }
+  warp(e) { // v6.2 Arrow Becomes You: the shooter appears where the arrow stopped, standing on top of the column under that spot
+    const i = e.who, o = 1 - i, b = this.archers[i], gy = e.p[1], hx = ARCHER_HALF[0] * 0.6;
+    let [x, , z] = e.p, top = gy, on = null;
+    for (const k of this.live) {
+      k.updateAABB(); const A = k.aabb;
+      if (x > A.lowerBound.x - hx && x < A.upperBound.x + hx && z > A.lowerBound.z - hx && z < A.upperBound.z + hx && A.upperBound.y > top) { top = A.upperBound.y; on = A; }
+    }
+    if (on) { // stand properly on that block (not teetering on its edge)
+      const inX = (v, lo, hi) => (hi - lo > 0.5 ? Math.min(hi - 0.25, Math.max(lo + 0.25, v)) : (lo + hi) / 2);
+      x = inX(x, on.lowerBound.x, on.upperBound.x); z = inX(z, on.lowerBound.z, on.upperBound.z);
+    }
+    const ep = this.archers[o].position; // the enemy's body is solid: if their box would overlap, stand on top of their column level beside them
+    b.position.set(x, top + ARCHER_HALF[1] + 0.03, z); b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0); b.quaternion.set(0, 0, 0, 1);
+    b.wakeUp(); this.fall[i] = { peak: b.position.y, falling: false }; this.jolted[i] = true; // a peel where you land still makes you slip
+    this.fx.push({ k: this.k, kind: 'warp', who: i, from: e.from, p: this.feet(i) });
+    const dx = ep.x - x, dz = ep.z - z, h = Math.hypot(dx, dz), dy = (ep.y - ARCHER_HALF[1]) - top;
+    if (h < WARP.bonkR && Math.abs(dy) < 1.3) { // right next to them: melee BONK (knocks them back a little, maybe off their tower)
+      const ux = h > 1e-3 ? dx / h : (i ? -1 : 1), uz = h > 1e-3 ? dz / h : 0, a = this.archers[o];
+      a.wakeUp(); a.velocity.set(ux * 3.2, 2, uz * 3.2); this.jolted[o] = true;
+      this.hurt(o, WARP.bonkDmg, 'bonk', this.feet(o));
+      this.fx.push({ k: this.k, kind: 'bonk', who: o, by: i, p: this.feet(o) });
     }
   }
   spinStep() {

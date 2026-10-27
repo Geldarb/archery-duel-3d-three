@@ -135,6 +135,9 @@ export const BIG_HEAD = 2, NECK_Y = 1.25; // big-head scale (head pivots at the 
 export const bigOf = (st, i) => (st && (st.big || (st.fx && st.fx[i] && st.fx[i].big > 0)) ? BIG_HEAD : 1);
 export const emptyFx = () => ({ splat: 0, wrap: 0, disco: 0, big: 0 });
 export const SPECIALS = Object.keys(ARROWS).filter(k => ARROWS[k].special);
+// v6.2 easter egg: a player named 'jesus' (any case, trimmed) may fire any special, every turn (st.jesus[i] = 1, set from the names).
+export const isJesus = l => !!l && String(l.name ?? '').trim().toLowerCase() === 'jesus';
+export const canFire = (st, i, type) => !!ARROWS[type] && (!ARROWS[type].special || (st.ammo[i][type] > 0) || !!(st.jesus && st.jesus[i]));
 export const BASIC = Object.keys(ARROWS).filter(k => !ARROWS[k].special);
 export const emptyAmmo = () => Object.fromEntries(SPECIALS.map(k => [k, 0]));
 // Three cartoon variants. riverX/slope/riverPh shape the winding river; trees [x, z, size]; tents [x, z, r, h]; treb [x, z]; rocks [x, z, r].
@@ -196,6 +199,7 @@ export function launch(i, aim, ap = initialPhys().a[i], op = initialPhys().a[1 -
   return { pos: { x: ap[0] + d.x * 0.9, y: ap[1] + SHOULDER + d.y * 0.9, z: ap[2] + d.z * 0.9 }, vel: { x: d.x * v, y: d.y * v, z: d.z * v } };
 }
 export const PICKUP_R = 1.3;
+const STEP60 = 1 / 60; // = physics.js STEP
 function towerBoxes(b) { // loose AABB per side, for a cheap early-out
   const bx = [0, 1].map(() => [1e9, 1e9, 1e9, -1e9, -1e9, -1e9]);
   b.forEach((q, i) => { if (parked(q)) return; const B = bx[LAYOUT[i].s]; for (let k = 0; k < 3; k++) { B[k] = Math.min(B[k], q[k] - 1.2); B[k + 3] = Math.max(B[k + 3], q[k] + 1.2); } });
@@ -279,7 +283,31 @@ export function simulateShot(world, shooter, aim, wind, type = 'normal', st = { 
     }
     out.push(arrow);
   }
-  return { type: ARROWS[type] ? type : 'normal', shooter, arrows: out };
+  const shot = { type: ARROWS[type] ? type : 'normal', shooter, arrows: out };
+  if (st.swap) { const w = warpTarget(world, shooter, shot, st); if (w && w.p) shot.warp = w; else if (w) shot.noWarp = w.why; } // v6.2 Arrow Becomes You
+  return shot;
+}
+// ---------- v6.2 'Arrow Becomes You' mode: the shooter swaps places with their arrow ----------
+// Where the main arrow stopped (block / scenery / ground / the enemy). Lost off-map, sailed past the enemy or caught a power-up = no swap. The spot is clamped to
+// the playable field, kept out of the river and never past the enemy (so the archers still face each other); physics.js puts the feet on
+// top of whatever block column is under it when the swap happens, and a landing right next to the enemy gives a melee BONK.
+export const WARP = { field: [DIST + 5, 8], river: 3.1, behind: 0.9, nearEnemy: 0.85, bonkR: 1.7, bonkDmg: 12, delay: 14 };
+export function warpTarget(world, shooter, shot, st) { // -> { who, k, from, p } or { why } when there's no swap
+  const a = shot.arrows[0], r = a && a.res, T = ARROWS[shot.type] || ARROWS.normal;
+  if (!r || r.kind === 'out' || r.kind === 'pickup') return { why: r ? r.kind : 'out' }; // lost off the map / caught a power-up: no swap
+  const me = st.phys.a[shooter], e = st.phys.a[1 - shooter], f = shooter ? -1 : 1;
+  let x = r.pos[0], z = r.pos[2];
+  if (r.who !== undefined) { // direct hit: you pop up right next to them (on the side you shot from)
+    const dx = me[0] - e[0], dz = me[2] - e[2], h = Math.hypot(dx, dz) || 1; x = e[0] + dx / h * WARP.nearEnemy; z = e[2] + dz / h * WARP.nearEnemy;
+  }
+  else if ((r.kind === 'ground' || r.kind === 'stone') && (x - e[0]) * f > -WARP.behind) return { why: 'past' }; // sailed past them: lost behind the enemy
+  const [FX, FZ] = WARP.field;
+  x = Math.max(-FX, Math.min(FX, x)); z = Math.max(-FZ, Math.min(FZ, z));
+  const rx = world.riverX(z), d = x - rx; // no standing in the river: step out onto the nearer bank
+  if (Math.abs(d) < WARP.river) x = rx + (d === 0 ? -f : Math.sign(d)) * WARP.river;
+  if ((x - e[0]) * f > -WARP.behind) x = e[0] - f * WARP.behind; // never past the enemy
+  const k = Math.ceil(r.t / STEP60 - 1e-6) + WARP.delay + (T.land === 'boot' ? T.delay : 0); // after the impact (and after the boot comes down)
+  return { who: shooter, k, from: [...me].map(r2), p: [r2(x), r2(Math.max(0, world.groundH(x, z))), r2(z)] };
 }
 function bounceNormal(hit, p, v, st) { // surface normal for a bounce: ground = up, block = its face nearest the hit point, scenery = straight back
   if (hit.kind === 'ground') return [0, 1, 0];
@@ -308,7 +336,7 @@ export function finishShot(prev, shooter, type, shot, phys, rand) {
   }
   for (const i of [0, 1]) hp[i] = Math.max(0, hp[i] - (phys.dmg[i] || 0));
   if (!pickup && !got && --spawnIn <= 0) { pickup = spawnPickup(rand); spawnIn = spawnDelay(rand); }
-  return { hp, ammo, pickup, spawnIn, got, phys: phys.phys, fx: funEffects(prev, shooter, type, shot), big: prev.big || 0 };
+  return { hp, ammo, pickup, spawnIn, got, phys: phys.phys, fx: funEffects(prev, shooter, type, shot), big: prev.big || 0, swap: prev.swap || 0, jesus: prev.jesus || [0, 0] };
 }
 // v6.1 status effects per player (st.fx[i]): splat (pigeon: no aim preview on their next turn), wrap (toilet roll: skip their next
 // shot), disco (their tower dances through their next shot), big (big head: for the shooter's next `turns` shots at them).
@@ -332,8 +360,9 @@ export function nextTurn(st, shooter) {
   if (st.fx && st.fx[o] && st.fx[o].wrap > 0) { st.fx[o].wrap = 0; return { turn: shooter, skipped: o }; }
   return { turn: o, skipped: -1 };
 }
-export const roundState = n => ({ hp: n.hp, phys: n.phys, ammo: n.ammo, pickup: n.pickup, spawnIn: n.spawnIn, fx: n.fx, big: n.big }); // what's carried between shots
-export const newRound = (rand, builds = null, opts = {}) => ({ hp: [HP, HP], phys: initialPhys(builds), ammo: [emptyAmmo(), emptyAmmo()], pickup: null, spawnIn: spawnDelay(rand), fx: [emptyFx(), emptyFx()], big: opts.big ? 1 : 0 });
+export const roundState = n => ({ hp: n.hp, phys: n.phys, ammo: n.ammo, pickup: n.pickup, spawnIn: n.spawnIn, fx: n.fx, big: n.big, swap: n.swap || 0, jesus: n.jesus || [0, 0] }); // what's carried between shots
+export const newRound = (rand, builds = null, opts = {}) => ({ hp: [HP, HP], phys: initialPhys(builds), ammo: [emptyAmmo(), emptyAmmo()], pickup: null, spawnIn: spawnDelay(rand), fx: [emptyFx(), emptyFx()], big: opts.big ? 1 : 0,
+  swap: opts.swap ? 1 : 0, jesus: [0, 1].map(i => (opts.jesus && opts.jesus[i] ? 1 : 0)) }); // v6.2: Arrow Becomes You mode, jesus egg
 export const winnerOf = hp => (hp[0] <= 0 ? 1 : hp[1] <= 0 ? 0 : -1);
 // Series: Single (1), Best of 3 or Best of 5. Returns the series winner or -1.
 export const SERIES = [1, 3, 5];

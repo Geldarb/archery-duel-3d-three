@@ -4,7 +4,7 @@ const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
 
-const BUILD = 'ad3t-v6.1';
+const BUILD = 'ad3t-v6.2';
 const app = express();
 app.get('/health', (req, res) => res.json({ ok: true, build: BUILD, rooms: rooms.size }));
 const fs = require('fs');
@@ -25,10 +25,10 @@ Promise.all([import('./public/sim.js'), import('./public/looks.js'), import('./p
   const start = r => { // one round; HP, towers (every block) and power-ups reset, arena and score kept
     clearTimeout(r.timer);
     r.rand = sim.rng(Math.floor(Math.random() * 2 ** 32)); // seeded per round: power-up timing / position / kind
-    Object.assign(r, { phase: 'play', st: sim.newRound(r.rand, r.builds, { big: r.big }), winner: -1, wind: sim.randomWind(), votes: new Set(), busy: 0 }); // every round resets to the built layout
+    Object.assign(r, { phase: 'play', st: sim.newRound(r.rand, r.builds, { big: r.big, swap: r.swap, jesus: r.looks.map(sim.isJesus) }), winner: -1, wind: sim.randomWind(), votes: new Set(), busy: 0 }); // every round resets to the built layout
     if (TEST_AMMO) for (const am of r.st.ammo) for (const k of TEST_AMMO) if (k in am) am[k] += 2; // test-only (never set live): lets the local suites fire specials online
     if (TEST_HP) r.st.hp = [TEST_HP, TEST_HP];
-    r.socks.forEach((s, i) => s.emit('start', { arena: r.arena, you: i, st: r.st, turn: r.turn, wind: r.wind, looks: r.looks, best: r.best, big: r.big, score: r.score, colors: r.builds ? r.builds.map(b => b && b.colors) : null }));
+    r.socks.forEach((s, i) => s.emit('start', { arena: r.arena, you: i, st: r.st, turn: r.turn, wind: r.wind, looks: r.looks, best: r.best, big: r.big, swap: r.swap, score: r.score, colors: r.builds ? r.builds.map(b => b && b.colors) : null }));
   };
   // build phase (once per series): both players build privately; the server validates + stores each plan, reveals both at the start
   const TEST_AMMO = (process.env.TEST_AMMO || '').split(',').filter(Boolean), TEST_HP = Number(process.env.TEST_HP) || 0; // test-only
@@ -45,7 +45,7 @@ Promise.all([import('./public/sim.js'), import('./public/looks.js'), import('./p
     Object.assign(r, { score: [0, 0], seriesWinner: -1, phase: 'build', st: null, winner: -1, votes: new Set(), builds: null, ready: [false, false],
       res: [0, 1].map(i => sim.validateBuild(i, sim.defaultPlan())), buildEnds: Date.now() + BUILD_SECS * 1000 });
     r.buildTimer = setTimeout(() => finishBuild(r), BUILD_SECS * 1000 + 800); // small grace for a last-second Ready
-    r.socks.forEach((s, i) => s.emit('build', { arena: r.arena, you: i, turn: r.turn, looks: r.looks, best: r.best, big: r.big, score: r.score, time: BUILD_SECS }));
+    r.socks.forEach((s, i) => s.emit('build', { arena: r.arena, you: i, turn: r.turn, looks: r.looks, best: r.best, big: r.big, swap: r.swap, score: r.score, time: BUILD_SECS }));
   };
   const leave = sock => {
     const r = sock.data.room;
@@ -54,14 +54,14 @@ Promise.all([import('./public/sim.js'), import('./public/looks.js'), import('./p
     for (const s of r.socks) if (s) { s.data.room = null; s.leave(r.code); if (s !== sock) s.emit('opponentLeft'); }
   };
   io.on('connection', sock => {
-    sock.on('create', ({ arena, look, best, bigHead } = {}) => {
+    sock.on('create', ({ arena, look, best, bigHead, swap } = {}) => {
       leave(sock);
       let code;
       do code = Array.from({ length: 4 }, () => CH[Math.floor(Math.random() * CH.length)]).join(''); while (rooms.has(code));
       const id = sim.ARENA_IDS.includes(arena) ? arena : sim.ARENA_IDS[Math.floor(Math.random() * sim.ARENA_IDS.length)];
-      const r = { code, arena: id, world: sim.makeWorld(id), socks: [sock, null], looks: [looks.sanitizeLook(look, 0), null], best: sim.SERIES.includes(+best) ? +best : 1, big: bigHead ? 1 : 0, turn: 0, created: Date.now() }; // looks are cosmetic, sanitised
+      const r = { code, arena: id, world: sim.makeWorld(id), socks: [sock, null], looks: [looks.sanitizeLook(look, 0), null], best: sim.SERIES.includes(+best) ? +best : 1, big: bigHead ? 1 : 0, swap: swap ? 1 : 0, turn: 0, created: Date.now() }; // looks are cosmetic, sanitised
       rooms.set(code, r); sock.data.room = r; sock.data.idx = 0; sock.join(code);
-      sock.emit('created', { code, arena: id, best: r.best, big: r.big });
+      sock.emit('created', { code, arena: id, best: r.best, big: r.big, swap: r.swap });
     });
     sock.on('join', ({ code, look } = {}) => {
       const r = rooms.get(String(code || '').toUpperCase().trim());
@@ -92,7 +92,7 @@ Promise.all([import('./public/sim.js'), import('./public/looks.js'), import('./p
       const r = sock.data.room, i = sock.data.idx;
       if (!r || !r.socks[1] || r.phase !== 'play' || r.winner >= 0 || r.turn !== i || Date.now() < r.busy) return; // only the active player, once the last shot has settled
       const a = { pitch: clamp(aim.pitch, 0, 1.3), power: clamp(aim.power, 0.1, 1) }; // any client yaw is dropped
-      if (!sim.ARROWS[type] || (sim.ARROWS[type].special && !(r.st.ammo[i][type] > 0))) type = 'normal'; // specials only if earned
+      if (!sim.canFire(r.st, i, type)) type = 'normal'; // specials only if earned (v6.2: or if you're named jesus)
       const shot = sim.simulateShot(r.world, i, a, r.wind, type, r.st);
       const res = phys.resolvePhysics(r.st.phys, shot, r.st); // authoritative: blocks, falls, debris, blasts, spin, v6.1 fun specials
       const next = sim.finishShot(r.st, i, shot.type, shot, res, r.rand);
