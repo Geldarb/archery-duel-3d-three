@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="build" content="ad3t-v6.3">
+<meta name="build" content="ad3t-v7.0">
 <meta name="color-scheme" content="only light">
 <meta name="theme-color" content="#2f6fe0">
 <meta name="mobile-web-app-capable" content="yes">
@@ -41,6 +41,8 @@
   </div>
 </div>
 
+<div id="squad" class="hidden" aria-label="Pick your shooter"></div>
+<div id="presets" class="hidden"><div class="pHead"><b id="presetTitle">Presets</b><button id="presetClose" aria-label="Close">✕</button></div><div id="presetRows"></div></div>
 <div id="build" class="hidden">
   <div id="bTop"><b id="bTitle">Build your tower</b><span id="bCount">▦ 0/30</span><span id="bTimer"></span><span id="bOpp" class="hidden"></span></div>
   <div id="bMsg"></div>
@@ -52,7 +54,7 @@
       <button id="bRot" aria-label="Turn view">⟳<small>Turn</small></button>
       <button id="bConfirm" class="hidden">✓ Place</button>
     </div>
-    <div id="bMain"><button id="bSkip">Auto</button><button id="bReady">Ready</button></div>
+    <div id="bMain"><button id="bPreset">💾 Presets</button><button id="bSkip">Auto</button><button id="bReady">Ready</button></div>
   </div>
 </div>
 <div id="pass" class="panel hidden">
@@ -64,17 +66,17 @@
   <header class="ph"><span class="hsp"></span><div class="ttl"><h1>Archery Duel</h1><div class="sub">Castle Siege</div></div><button id="fsHome" class="fsBtn icon" aria-label="Full screen"><svg class="fsIn" viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg><svg class="fsOut" viewBox="0 0 24 24"><path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/></svg></button></header>
   <div class="pb">
     <div class="lbl">Match</div>
-    <div class="chips" id="seriesBtns"><button data-s="1" class="on">Single</button><button data-s="3">Best of 3</button><button data-s="5">Best of 5</button></div>
+    <div class="chips" id="seriesBtns"><button data-s="1" class="on">Single</button><button data-s="3">Best of 3</button><button data-s="5">Best of 5</button><button data-s="castle" id="castleBtn" title="Defend the Castle: 1 defender vs 3 attackers (tap again: 10 / 15 turns)">🏰 Castle</button></div>
     <div class="lbl">Fun</div>
     <div class="chips" id="funBtns"><button data-big="0" class="on">Normal heads</button><button data-big="1">🤯 Big heads</button><button id="swapBtn" aria-pressed="false" title="You teleport to wherever your arrow lands">🏹 Arrow Becomes You</button></div>
     <div class="lbl">Arena</div>
     <div class="chips" id="arenas"><button data-a="random" class="on">Random</button><button data-a="field">Sunny Field</button><button data-a="dusk">Stormy Dusk</button><button data-a="winter">Winter Siege</button></div>
-    <div class="row2"><button id="customBtn">Customise</button><button id="helpBtn">How to play</button></div>
+    <div class="row2"><button id="customBtn">Customise</button><button id="builderBtn">🏗 Tower Builder</button><button id="helpBtn">How to play</button></div>
     <div class="row"><input id="codeIn" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Room code"><button id="joinBtn">Join room</button></div>
     <div id="homeMsg" class="msg"></div>
     <button id="installBtn" class="hidden"><svg viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M5 20h14"/></svg>Install app</button>
     <div id="installTip" class="tip hidden"></div>
-    <div class="build">ad3t-v6.3</div>
+    <div class="build">ad3t-v7.0</div>
   </div>
   <footer class="pf"><button id="hotBtn">Hot-seat</button><button id="createBtn">Create room</button></footer>
 </div>
