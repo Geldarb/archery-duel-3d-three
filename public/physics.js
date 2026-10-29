@@ -1,7 +1,7 @@
 // Shared rigid-body tower physics (cannon-es). Runs identically on the server (authoritative) and in the browser (live playback / hot-seat).
 // A run is rebuilt from a snapshot at the start of every shot and driven by a list of timed events derived from the shot's arrows.
 import * as C from 'cannon-es';
-import { LAYOUT, ARROWS, ARCHER_HALF, parked, wrapHit, WARP } from './sim.js';
+import { HEAVY_MASS, hash01, PARK_Y, LAYOUT, ARROWS, ARCHER_HALF, parked, wrapHit, WARP } from './sim.js';
 
 export const STEP = 1 / 60, SETTLE = 180, MAX_STEPS = 60 * 26;
 const CHAIR_HALF = 0.36, CHAIR_DELAY = 20;
@@ -60,13 +60,17 @@ export class PhysRun {
     w.addContactMaterial(new C.ContactMaterial(bm, sm, { friction: 0.4, restitution: 0.8 }));
     w.addContactMaterial(new C.ContactMaterial(bm, gm, { friction: 0.4, restitution: 0.3 }));
     w.addContactMaterial(new C.ContactMaterial(bm, bm, { friction: 0.4, restitution: 0.6 }));
-    this.kinds = { banana: [...((snap.k && snap.k.banana) || [])], bouncy: [...((snap.k && snap.k.bouncy) || [])] };
+    const kk = n => [...((snap.k && snap.k[n]) || [])];
+    this.kinds = { banana: kk('banana'), bouncy: kk('bouncy'), heavy: kk('heavy'), cloud: kk('cloud'), tramp: kk('tramp') };
     this.banana = new Set(this.kinds.banana);
     const ground = new C.Body({ mass: 0, material: gm, shape: new C.Box(new C.Vec3(90, 1, 60)), position: new C.Vec3(0, -1, 0) }); w.addBody(ground);
     const sleepy = (b, add = true) => { b.material = sm; b.sleepSpeedLimit = 0.25; b.sleepTimeLimit = 0.3; if (add) w.addBody(b); b.sleep(); return b; };
     this.blocks = LAYOUT.map((l, i) => { // unused build-phase slots stay parked outside the world
       const s = snap.b[i], b = new C.Body({ mass: 8 * l.half[0] * l.half[1] * l.half[2], shape: new C.Box(v3(l.half)), position: v3(s) });
       b.quaternion.set(s[3], s[4], s[5], s[6]); b.idx = i; sleepy(b, !parked(s));
+      if (this.kinds.heavy.includes(i)) { b.mass *= HEAVY_MASS; b.updateMassProperties(); } // v6.3 heavy stone: barely budges
+      if (this.kinds.cloud.includes(i)) { b.cloud = true; b.mass = 0; b.type = C.Body.STATIC; b.updateMassProperties(); } // v6.3 cloud: floats until hit
+      if (this.kinds.tramp.includes(i)) { b.material = bm; b.bouncy = b.tramp = true; b.addEventListener('collide', e => this.onBouncy(b, e.body)); }
       if (this.kinds.bouncy.includes(i)) { b.material = bm; b.bouncy = true; b.addEventListener('collide', e => this.onBouncy(b, e.body)); }
       return b;
     });
@@ -98,8 +102,15 @@ export class PhysRun {
     if (vy > -1.8 || this.k - last < 20) return;
     this.boingAt.set(other.id, this.k);
     other.velocity.y = Math.min(9, -vy * 0.9 + 2.2);
+    if (b.tramp) { const r = hash01(this.k, b.idx), a = r * Math.PI * 2; other.velocity.y = Math.min(10, -vy + 3); other.velocity.x += Math.cos(a) * 2.5; other.velocity.z += Math.sin(a) * 2.5; } // v6.3 trampoline: random-ish sideways kick
     if (other.who !== undefined) { this.jolted[other.who] = true; this.fall[other.who].falling = false; this.fall[other.who].peak = other.position.y + 1.5; } // a bounce isn't a fall
     this.fx.push({ k: this.k, kind: 'boing', i: b.idx, p: [b.position.x, b.position.y + 0.4, b.position.z] });
+  }
+  pop(b) { // v6.3: a hit cloud pops (removed; whatever sat on it falls)
+    if (!b.world) return;
+    const p = [b.position.x, b.position.y, b.position.z];
+    this.world.removeBody(b); this.live = this.live.filter(x => x !== b); b.position.y = PARK_Y; b.velocity.set(0, 0, 0);
+    this.wakeNear(v3(p), 4); this.fx.push({ k: this.k, kind: 'pop', i: b.idx, p });
   }
   bananaUnder(i) { // a banana-peel block under (or right next to) the archer's feet
     const a = this.archers[i].position, fy = a.y - ARCHER_HALF[1];
@@ -137,7 +148,9 @@ export class PhysRun {
     const p = v3(e.p);
     this.wakeNear(p, e.kind === 'boot' || e.kind === 'cow' ? 9 : 7);
     if (e.kind === 'hit') { // shove at the block's mid-height so it slides out (tablecloth-style) instead of digging in
-      const b = this.blocks[e.i]; b.applyImpulse(v3(e.j), new C.Vec3(0, 0, 0)); this.fx.push({ k: this.k, kind: e.boing ? 'boing' : 'hit', i: e.i, p: e.p }); }
+      const b = this.blocks[e.i];
+      if (b.cloud) this.pop(b);
+      else { b.applyImpulse(v3(e.j), new C.Vec3(0, 0, 0)); this.fx.push({ k: this.k, kind: e.boing ? 'boing' : 'hit', i: e.i, p: e.p }); } }
     else if (e.kind === 'touch') { this.jolted[e.who] = true; this.archers[e.who].wakeUp(); }
     else if (e.kind === 'pigeon') { this.jolted[e.who] = true; this.hurt(e.who, e.D, 'pigeon', this.feet(e.who)); this.fx.push({ k: this.k, kind: 'pigeon', who: e.who, p: this.feet(e.who) }); }
     else if (e.kind === 'toilet') { this.hurt(e.who, e.D, 'toilet', this.feet(e.who)); this.fx.push({ k: this.k, kind: 'toilet', who: e.who, p: this.feet(e.who) }); }
@@ -262,7 +275,7 @@ export class PhysRun {
     this.falls();
     this.slips();
     this.k++;
-    const still = this.live.every(b => b.sleepState === C.Body.SLEEPING) && this.archers.every(b => b.sleepState === C.Body.SLEEPING);
+    const still = this.live.every(b => b.cloud || b.sleepState === C.Body.SLEEPING) && this.archers.every(b => b.sleepState === C.Body.SLEEPING);
     if ((this.k > this.lastK && this.ei >= this.ev.length && still && (!this.spin || this.k >= this.spin.end)) || this.k >= this.lastK + SETTLE || this.k >= MAX_STEPS) this.done = true;
     return !this.done;
   }

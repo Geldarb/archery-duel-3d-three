@@ -5,7 +5,7 @@ export const DIST = 15, HP = 100, MAXV = 26, G = 9.8;
 export const WALL_H = 5, SHOULDER = 1.15;                 // tower-top floor height, bow-arm pivot height above the archer's feet
 export const TOWER_HALF = 1.6, WALL_T = 0.8, COURSE_H = 0.92, COURSES = 5, SLAB_H = 0.4, MERLON_S = 0.7;
 export const ARCHER_HALF = [0.28, 0.8, 0.28];              // archer physics box (feet at y - 0.8)
-export const BUILD_MAX = 30, CELL = 0.8, PARK_Y = -40;     // build phase: blocks per player, grid cell (= block size), parked-slot height
+export const BUILD_MAX = 40, CELL = 0.8, PARK_Y = -40;     // build phase: blocks per player, grid cell (= block size), parked-slot height
 const towerX = s => (s ? DIST : -DIST);
 // Block layout: hollow square shell (5 courses x 6 blocks), 3 floor slabs the archer stands on, 8 merlons. 41 per tower.
 export const LAYOUT = (() => {
@@ -31,13 +31,13 @@ export const parked = q => q[1] < PARK_Y / 2;
 // builds[s] = validated build-phase result { blocks: [[x,y,z]...], archer: [x,y,z] }: that side's classic tower is parked and the player's
 // own tower (built from the ground up) is used instead. null = the classic 41-block tower (legacy layout, kept for the regression suites).
 export function initialPhys(builds = null) {
-  const b = LAYOUT.map(l => [...l.pos, 0, 0, 0, 1]), a = [[-DIST, WALL_H, 0], [DIST, WALL_H, 0]], k = { banana: [], bouncy: [] }; // k: v6.1 special build pieces (block indices)
+  const b = LAYOUT.map(l => [...l.pos, 0, 0, 0, 1]), a = [[-DIST, WALL_H, 0], [DIST, WALL_H, 0]], k = { banana: [], bouncy: [], heavy: [], cloud: [], tramp: [] }; // k: v6.1/v6.3 special build pieces (block indices)
   if (builds) for (const s of [0, 1]) {
     const B = builds[s]; if (!B) continue;
     LAYOUT.forEach((l, i) => { if (l.s === s && l.kind !== 'build') b[i] = [l.pos[0], PARK_Y, l.pos[2], 0, 0, 0, 1]; });
     B.blocks.forEach((p, n) => { b[BUILD_SLOT0[s] + n] = [p[0], p[1], p[2], 0, 0, 0, 1]; });
     a[s] = [...B.archer];
-    (B.kinds || []).forEach((kd, n) => { if (kd === 'banana' || kd === 'bouncy') k[kd].push(BUILD_SLOT0[s] + n); });
+    (B.kinds || []).forEach((kd, n) => { if (k[kd]) k[kd].push(BUILD_SLOT0[s] + n); });
   }
   return { b, a, k };
 }
@@ -51,13 +51,20 @@ export const BUILD_SLOT0 = [0, 1].map(s => LAYOUT.findIndex(l => l.s === s && l.
 export const defaultPlan = () => ({ blocks: [], colors: [], archer: [0, 0] });
 // v6.1 special build pieces (count toward BUILD_MAX): banana peel (archers who end up on it after a hit/fall slip) and bouncy castle
 // (arrows bounce off it, anything landing on it gets bounced up). plan.kinds = optional per-block kind, validated with these limits.
-export const PIECES = { block: { max: BUILD_MAX }, banana: { max: 2, name: 'Banana peel' }, bouncy: { max: 3, name: 'Bouncy castle' } };
+// v6.3: no per-type caps any more (every piece just counts toward BUILD_MAX); + heavy stone (6x mass), cloud (floats, pops when hit), trampoline
+export const PIECES = { block: { max: BUILD_MAX }, banana: { max: BUILD_MAX, name: 'Banana peel' }, bouncy: { max: BUILD_MAX, name: 'Bouncy castle' },
+  heavy: { max: BUILD_MAX, name: 'Heavy stone' }, cloud: { max: BUILD_MAX, name: 'Cloud' }, tramp: { max: BUILD_MAX, name: 'Trampoline' } };
+export const CLOUD_LV = 3, HEAVY_MASS = 6; // clouds float at least 3 levels up; heavy stone mass multiplier
+// deterministic 0..1 hash (same on server and every client): trampoline bounce angles
+export const hash01 = (a, b) => ((Math.imul(a | 0, 2654435761) ^ Math.imul((b | 0) + 7, 40503)) >>> 0) % 10007 / 10007;
 // Skip / quick play: a ready-made 30-block tower (2x2 keep, 6 high, plus a 2x1x3 front buttress), archer on the keep top (4.8 m).
 export function autoPlan(s, color = DEFAULT_BLOCK) {
   const blocks = [], front = s ? -2 : 1;
   for (let y = 0; y < 6; y++) {
     for (const gx of [-1, 0]) for (const gz of [-1, 0]) blocks.push([gx, gz, y]);
     if (y < 3) for (const gz of [-1, 0]) blocks.push([front, gz, y]);
+    if (y < 3) for (const gz of [-1, 0]) blocks.push([s ? 1 : -2, gz, y]); // v6.3: 40-block budget, back buttress
+    if (y < 2) for (const gx of [-1, 0]) blocks.push([gx, 1, y]);
   }
   return { blocks, colors: blocks.map(() => (isBlockColor(color) ? color : DEFAULT_BLOCK)), archer: [0, 0] };
 }
@@ -88,10 +95,10 @@ export function validateBuild(s, plan) {
     const k = c[0] + ',' + c[1], lv = cols.get(k) || 0, want = c.length === 3 ? c[2] : lv;
     if (!Number.isInteger(want) || want < 0) return fail('Bad block', n);
     const at = cellPos(s, c[0], c[1], Math.min(want, BUILD_LEVELS));
-    if (want > lv) return { ...fail('No floating blocks: it needs support underneath', n), pos: at };
+    if (want > lv && !(kd && kd[n] === 'cloud')) return { ...fail('No floating blocks: it needs support underneath', n), pos: at };
     if (want < lv) return { ...fail('That spot is taken', n), pos: at };
-    if (lv >= BUILD_LEVELS) return { ...fail(`Too high (max ${BUILD_LEVELS} blocks)`, n), pos: cellPos(s, c[0], c[1], lv) };
-    cols.set(k, lv + 1); out.push(at); boxes.push(box(at, H));
+    if (want >= BUILD_LEVELS) return { ...fail(`Too high (max ${BUILD_LEVELS} blocks)`, n), pos: cellPos(s, c[0], c[1], want) };
+    cols.set(k, want + 1); out.push(at); boxes.push(box(at, H));
   }
   const a = plan.archer || [0, 0];
   if (!Array.isArray(a) || !isInt(a[0], -ARCHER_GRID, ARCHER_GRID) || !isInt(a[1], -ARCHER_GRID, ARCHER_GRID)) return fail('Archer must stay in your build zone');
@@ -222,7 +229,7 @@ function collide(world, p, shooter, st, t, tb, pickupTaken) {
 }
 // st = { phys: { b, a }, pickup }. Returns { type, arrows: [{ t0, pts: [[x,y,z] every 1/60 s], res: { kind, who?, block?, pickup?, dmg, pos, dir, t } }] }
 export function simulateShot(world, shooter, aim, wind, type = 'normal', st = { phys: initialPhys(), pickup: null }) {
-  const T = ARROWS[type] || ARROWS.normal, DT = 1 / 240, out = [], tb = towerBoxes(st.phys.b), bouncy = new Set((st.phys.k && st.phys.k.bouncy) || []);
+  const T = ARROWS[type] || ARROWS.normal, DT = 1 / 240, out = [], tb = towerBoxes(st.phys.b), bouncy = new Set((st.phys.k && st.phys.k.bouncy) || []), tramp = new Set((st.phys.k && st.phys.k.tramp) || []);
   const { pos, vel } = launch(shooter, aim, st.phys.a[shooter], st.phys.a[1 - shooter]);
   const queue = [{ t0: 0, p: pos, v: vel, child: false }];
   let taken = false;
@@ -241,6 +248,16 @@ export function simulateShot(world, shooter, aim, wind, type = 'normal', st = { 
         }
       }
       const hit = collide(world, p, shooter, st, t, tb, taken);
+      if (hit && hit.kind === 'block' && tramp.has(hit.block) && bounces.filter(x => x.boing).length < 3 && Math.hypot(v.x, v.y, v.z) > 2) {
+        // v6.3 trampoline: launches the projectile back up at a random-ish (deterministic) angle
+        const sp = Math.hypot(v.x, v.y, v.z), r = hash01(n, hit.block), r2_ = hash01(hit.block, n), yaw = (r - 0.5) * 2.4, h = Math.hypot(v.x, v.z) || 1;
+        bounces.push({ kind: 'block', block: hit.block, boing: true, tramp: true, pos: [r2(p.x), r2(p.y), r2(p.z)], dir: [v.x / sp, v.y / sp, v.z / sp].map(r2), t: r2(t) });
+        const hs = sp * (0.35 + 0.4 * r2_), ux = v.x / h, uz = v.z / h, c = Math.cos(yaw), sn = Math.sin(yaw);
+        v.x = (ux * c - uz * sn) * hs * (r2_ < 0.35 ? -1 : 1); v.z = (ux * sn + uz * c) * hs; v.y = Math.max(5, sp * (0.6 + 0.3 * r));
+        p.x = px; p.y = py; p.z = pz;
+        if (n % 4 === 0) pts.push([r2(p.x), r2(p.y), r2(p.z)]);
+        continue;
+      }
       if (hit && hit.kind === 'block' && bouncy.has(hit.block) && bounces.filter(x => x.boing).length < 2 && Math.hypot(v.x, v.y, v.z) > 2) {
         // v6.1 bouncy castle: every projectile bounces off it (boing), keeps 80% of its speed
         const sp = Math.hypot(v.x, v.y, v.z), nrm = bounceNormal(hit, p, v, st), dot = v.x * nrm[0] + v.y * nrm[1] + v.z * nrm[2];
