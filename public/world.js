@@ -1,7 +1,7 @@
 // Cartoon castle arena: toon-shaded valley, winding river, stacked-block physics towers, toy castles, tents, trebuchet, clouds, weather.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { LAYOUT, parked, BUILD_SLOT0, BUILD_MAX } from './sim.js';
+import { LAYOUT, parked, BUILD_SLOT0, SLOTS } from './sim.js';
 import { BLOCK_COLORS, DEFAULT_BLOCK, hexOf } from './looks.js';
 
 // ---------- toon helpers (shared with game.js) ----------
@@ -140,7 +140,7 @@ export function buildArena(scene, world, lights) {
   });
   function setBlocks(b) { b.forEach((q, i) => { blocks[i].position.set(q[0], q[1], q[2]); blocks[i].quaternion.set(q[3], q[4], q[5], q[6]); blocks[i].visible = !parked(q); }); } // unplaced build blocks stay hidden
   function setBuildColors(cs) { // cs[s] = colour id per placed block of side s (null/missing = sandstone)
-    for (const s of [0, 1]) for (let n = 0; n < BUILD_MAX; n++) {
+    for (const s of [0, 1]) for (let n = 0; n < SLOTS; n++) {
       const i = BUILD_SLOT0[s] + n, id = (cs && cs[s] && cs[s][n]) || DEFAULT_BLOCK, m = blocks[i];
       if (m.userData.col !== id) { m.userData.col = id; m.material.color.copy(shade(hexOf(BLOCK_COLORS, id), i)); }
     }

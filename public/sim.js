@@ -5,7 +5,7 @@ export const DIST = 15, HP = 100, MAXV = 26, G = 9.8;
 export const WALL_H = 5, SHOULDER = 1.15;                 // tower-top floor height, bow-arm pivot height above the archer's feet
 export const TOWER_HALF = 1.6, WALL_T = 0.8, COURSE_H = 0.92, COURSES = 5, SLAB_H = 0.4, MERLON_S = 0.7;
 export const ARCHER_HALF = [0.28, 0.8, 0.28];              // archer physics box (feet at y - 0.8)
-export const BUILD_MAX = 40, CELL = 0.8, PARK_Y = -40;     // build phase: blocks per player, grid cell (= block size), parked-slot height
+export const BUILD_MAX = 40, CELL = 0.8, PARK_Y = -40, SLOTS = 80;     // build phase: blocks per player, grid cell (= block size), parked-slot height
 const towerX = s => (s ? DIST : -DIST);
 // Block layout: hollow square shell (5 courses x 6 blocks), 3 floor slabs the archer stands on, 8 merlons. 41 per tower.
 export const LAYOUT = (() => {
@@ -22,7 +22,7 @@ export const LAYOUT = (() => {
     for (const k of [-1, 0, 1]) B(s, 'slab', 0, COURSES * COURSE_H + SLAB_H / 2, k * 3.2 / 3, 3.2, SLAB_H, 3.2 / 3);
     for (const i of [-1, 0, 1]) for (const k of [-1, 0, 1]) if (i || k) B(s, 'merlon', i * 1.25, WALL_H + MERLON_S / 2, k * 1.25, MERLON_S, MERLON_S, MERLON_S);
   }
-  for (const s of [0, 1]) for (let n = 0; n < BUILD_MAX; n++) B(s, 'build', 0, PARK_Y, 0, CELL, CELL, CELL); // build-phase blocks: parked (no body, hidden) until placed
+  for (const s of [0, 1]) for (let n = 0; n < SLOTS; n++) B(s, 'build', 0, PARK_Y, 0, CELL, CELL, CELL); // build-phase blocks: parked (no body, hidden) until placed
   return L;
 })();
 export const BLOCKS = LAYOUT.length;
@@ -31,13 +31,14 @@ export const parked = q => q[1] < PARK_Y / 2;
 // builds[s] = validated build-phase result { blocks: [[x,y,z]...], archer: [x,y,z] }: that side's classic tower is parked and the player's
 // own tower (built from the ground up) is used instead. null = the classic 41-block tower (legacy layout, kept for the regression suites).
 export function initialPhys(builds = null) {
-  const b = LAYOUT.map(l => [...l.pos, 0, 0, 0, 1]), a = [[-DIST, WALL_H, 0], [DIST, WALL_H, 0]], k = { banana: [], bouncy: [], heavy: [], cloud: [], tramp: [] }; // k: v6.1/v6.3 special build pieces (block indices)
+  const b = LAYOUT.map(l => [...l.pos, 0, 0, 0, 1]), a = [[-DIST, WALL_H, 0], [DIST, WALL_H, 0]], k = { banana: [], bouncy: [], heavy: [], cloud: [], tramp: [], sz: {} }; // k: v6.1/v6.3 special build pieces (block indices)
   if (builds) for (const s of [0, 1]) {
     const B = builds[s]; if (!B) continue;
     LAYOUT.forEach((l, i) => { if (l.s === s && l.kind !== 'build') b[i] = [l.pos[0], PARK_Y, l.pos[2], 0, 0, 0, 1]; });
     B.blocks.forEach((p, n) => { b[BUILD_SLOT0[s] + n] = [p[0], p[1], p[2], 0, 0, 0, 1]; });
     a[s] = [...B.archer];
     (B.kinds || []).forEach((kd, n) => { if (k[kd]) k[kd].push(BUILD_SLOT0[s] + n); });
+    (B.sizes || []).forEach((z, n) => { if (z > 1) k.sz[BUILD_SLOT0[s] + n] = z; }); // v7.0 big blocks
   }
   return { b, a, k };
 }
@@ -49,6 +50,22 @@ export function initialPhys(builds = null) {
 export const BUILD_GRID = 3, ARCHER_GRID = 5, BUILD_LEVELS = 8, BUILD_TOP = BUILD_LEVELS * CELL, BUILD_TIME = 60;
 export const BUILD_SLOT0 = [0, 1].map(s => LAYOUT.findIndex(l => l.s === s && l.kind === 'build'));
 export const defaultPlan = () => ({ blocks: [], colors: [], archer: [0, 0] });
+// v7.0 block sizes: plan.sizes[n] = 1 | 2 | 3 (a z x z x z cube, min corner at [gx, gz]); costs z*z of the budget
+export const SIZES = [1, 2, 3];
+const halfZ = (H, z) => H.map(h => rd(h + (z - 1) * CELL / 2));
+export const halfOf = (i, k) => { const z = k && k.sz && k.sz[i]; return z > 1 ? halfZ(LAYOUT[i].half, z) : LAYOUT[i].half; };
+export const sizesOf = plan => plan.blocks.map((_, n) => (plan.sizes && plan.sizes[n]) || 1);
+export const planCost = plan => sizesOf(plan).reduce((a, z) => a + z * z, 0);
+export function footTop(plan, gx, gz, z) { // next free level under a z x z footprint (client mirror of validateBuild's column heights)
+  const sz = sizesOf(plan); let top = 0;
+  plan.blocks.forEach((c, n) => { const k = sz[n]; if (c[0] < gx + z && c[0] + k > gx && c[1] < gz + z && c[1] + k > gz) top = Math.max(top, (c.length > 2 ? c[2] : 0) + k); });
+  return top;
+}
+// v7.0 Defend the Castle: 1 defender (80-block castle, wider zone) vs a squad of 3 attackers (10-block cover); attackers win only by killing
+// the defender, the defender wins by surviving `turns` of their own shots or knocking out all 3. Then sides swap and the legs are compared.
+export const CASTLE_MAX = 80, COVER_MAX = 10, CASTLE_GRID = 5, CASTLE_TIME = 90, SQUAD = 3, CASTLE_TURNS = [10, 15], SQUAD_Z = [-5, 0, 5];
+export const zoneOf = (s, mode) => { const c = !!mode && (mode.def === 0 || mode.def === 1), def = c && s === mode.def;
+  return { grid: def ? CASTLE_GRID : BUILD_GRID, agrid: def ? 2 * CASTLE_GRID : ARCHER_GRID, max: !c ? BUILD_MAX : def ? CASTLE_MAX : COVER_MAX, squad: c && !def, castle: def }; };
 // v6.1 special build pieces (count toward BUILD_MAX): banana peel (archers who end up on it after a hit/fall slip) and bouncy castle
 // (arrows bounce off it, anything landing on it gets bounced up). plan.kinds = optional per-block kind, validated with these limits.
 // v6.3: no per-type caps any more (every piece just counts toward BUILD_MAX); + heavy stone (6x mass), cloud (floats, pops when hit), trampoline
@@ -58,7 +75,25 @@ export const CLOUD_LV = 3, HEAVY_MASS = 6; // clouds float at least 3 levels up;
 // deterministic 0..1 hash (same on server and every client): trampoline bounce angles
 export const hash01 = (a, b) => ((Math.imul(a | 0, 2654435761) ^ Math.imul((b | 0) + 7, 40503)) >>> 0) % 10007 / 10007;
 // Skip / quick play: a ready-made 30-block tower (2x2 keep, 6 high, plus a 2x1x3 front buttress), archer on the keep top (4.8 m).
-export function autoPlan(s, color = DEFAULT_BLOCK) {
+export function autoPlan(s, color = DEFAULT_BLOCK, mode = null) {
+  const z0 = zoneOf(s, mode);
+  if (z0.castle || z0.squad) { // v7.0 auto castle (80) / auto cover wall (10), laid out for side 0 then mirrored
+    const B = [], add = (gx, gz, lv, z = 1, kd = 'block') => B.push({ gx, gz, lv, z, kd });
+    if (z0.castle) {
+      for (const lv of [0, 2, 4]) add(-1, -1, lv, 2, 'heavy'); // 2x2 heavy keep, 6 high: the defender stands on top
+      for (let lv = 0; lv < 3; lv++) {
+        for (let gz = -4; gz <= 3; gz++) add(2, gz, lv); // front wall
+        if (lv < 2) for (let gx = -4; gx <= 1; gx++) { add(gx, -4, lv); add(gx, 3, lv); } // side walls
+        if (lv === 0 || lv === 2) { add(3, -5, lv, 2); add(3, 3, lv, 2); } // big corner towers
+      }
+      for (let gz = -2; gz <= 1; gz++) add(-5, gz, 0, 1, 'tramp');
+    } else {
+      for (let gz = -3; gz <= 2; gz++) add(1, gz, 0);
+      for (const gz of [-3, -1, 0, 2]) add(1, gz, 1);
+    }
+    const blocks = B.map(b => [s ? -b.gx - b.z : b.gx, b.gz, b.lv]);
+    return { blocks, sizes: B.map(b => b.z), kinds: B.map(b => b.kd), colors: B.map(() => (isBlockColor(color) ? color : DEFAULT_BLOCK)), archer: [0, 0] };
+  }
   const blocks = [], front = s ? -2 : 1;
   for (let y = 0; y < 6; y++) {
     for (const gx of [-1, 0]) for (const gz of [-1, 0]) blocks.push([gx, gz, y]);
@@ -78,11 +113,15 @@ function surface(boxes, cx, cz, hx, hz) { // highest top under a footprint, and 
 }
 const rd = v => Math.round(v * 1e6) / 1e6;
 const isInt = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
+const sizedPos = (s, gx, gz, level, z) => [rd(towerX(s) + (gx + z / 2) * CELL), rd((level + z / 2) * CELL), rd((gz + z / 2) * CELL)];
 export const cellPos = (s, gx, gz, level) => [rd(towerX(s) + (gx + 0.5) * CELL), rd((level + 0.5) * CELL), rd((gz + 0.5) * CELL)];
-export function validateBuild(s, plan) {
+export function validateBuild(s, plan, mode = null) {
+  const Z = zoneOf(s, mode), G = Z.grid;
   const fail = (err, at = -1) => ({ ok: false, err, at });
   if (!plan || typeof plan !== 'object' || !Array.isArray(plan.blocks)) return fail('Bad plan');
-  if (plan.blocks.length > BUILD_MAX) return fail(`Only ${BUILD_MAX} blocks`);
+  const zs = plan.sizes; // v7.0 optional per-block size
+  if (zs !== undefined && (!Array.isArray(zs) || zs.length !== plan.blocks.length || !zs.every(z => SIZES.includes(z)))) return fail('Bad block size');
+  if (plan.blocks.length > SLOTS || planCost(plan) > Z.max) return fail(`Only ${Z.max} blocks`);
   const cl = plan.colors; // v5.3: optional per-block colour ids (missing = sandstone), only from the palette
   if (cl !== undefined && (!Array.isArray(cl) || cl.length !== plan.blocks.length || !cl.every(isBlockColor))) return fail('Bad block colour');
   const kd = plan.kinds; // v6.1: optional per-block piece kind
@@ -90,21 +129,25 @@ export function validateBuild(s, plan) {
   if (kd) for (const x of ['banana', 'bouncy']) if (kd.filter(y => y === x).length > PIECES[x].max) return fail(`Only ${PIECES[x].max} ${PIECES[x].name.toLowerCase()} pieces`);
   const H = LAYOUT[BUILD_SLOT0[s]].half, boxes = [], out = [], cols = new Map();
   for (let n = 0; n < plan.blocks.length; n++) {
-    const c = plan.blocks[n];
-    if (!Array.isArray(c) || c.length < 2 || c.length > 3 || !isInt(c[0], -BUILD_GRID, BUILD_GRID - 1) || !isInt(c[1], -BUILD_GRID, BUILD_GRID - 1)) return fail('Outside your build zone', n);
-    const k = c[0] + ',' + c[1], lv = cols.get(k) || 0, want = c.length === 3 ? c[2] : lv;
+    const c = plan.blocks[n], z = zs ? zs[n] : 1;
+    if (!Array.isArray(c) || c.length < 2 || c.length > 3 || !isInt(c[0], -G, G - z) || !isInt(c[1], -G, G - z)) return fail('Outside your build zone', n);
+    let lv = 0; for (let dx = 0; dx < z; dx++) for (let dz = 0; dz < z; dz++) lv = Math.max(lv, cols.get((c[0] + dx) + ',' + (c[1] + dz)) || 0);
+    const want = c.length === 3 ? c[2] : lv;
     if (!Number.isInteger(want) || want < 0) return fail('Bad block', n);
-    const at = cellPos(s, c[0], c[1], Math.min(want, BUILD_LEVELS));
+    const at = sizedPos(s, c[0], c[1], Math.min(want, BUILD_LEVELS), z);
     if (want > lv && !(kd && kd[n] === 'cloud')) return { ...fail('No floating blocks: it needs support underneath', n), pos: at };
     if (want < lv) return { ...fail('That spot is taken', n), pos: at };
-    if (want >= BUILD_LEVELS) return { ...fail(`Too high (max ${BUILD_LEVELS} blocks)`, n), pos: cellPos(s, c[0], c[1], want) };
-    cols.set(k, want + 1); out.push(at); boxes.push(box(at, H));
+    if (want + z > BUILD_LEVELS) return { ...fail(`Too high (max ${BUILD_LEVELS} blocks)`, n), pos: at };
+    for (let dx = 0; dx < z; dx++) for (let dz = 0; dz < z; dz++) cols.set((c[0] + dx) + ',' + (c[1] + dz), want + z);
+    out.push(at); boxes.push(box(at, halfZ(H, z)));
   }
   const a = plan.archer || [0, 0];
-  if (!Array.isArray(a) || !isInt(a[0], -ARCHER_GRID, ARCHER_GRID) || !isInt(a[1], -ARCHER_GRID, ARCHER_GRID)) return fail('Archer must stay in your build zone');
-  const ax = towerX(s) + a[0] * 0.4, az = a[1] * 0.4, sf = surface(boxes, ax, az, ARCHER_HALF[0], ARCHER_HALF[2]);
-  if (!sf.on) return { ...fail('Archer needs solid stone underfoot'), pos: out.at(-1) };
-  return { ok: true, blocks: out, colors: plan.blocks.map((_, n) => (cl ? cl[n] : DEFAULT_BLOCK)), kinds: plan.blocks.map((_, n) => (kd ? kd[n] : 'block')), archer: [rd(ax), rd(sf.top), rd(az)] };
+  if (!Array.isArray(a) || !isInt(a[0], -Z.agrid, Z.agrid) || !isInt(a[1], -Z.agrid, Z.agrid)) return fail('Archer must stay in your build zone');
+  const spot = az => { const ax = towerX(s) + a[0] * 0.4, sf = surface(boxes, ax, az, ARCHER_HALF[0], ARCHER_HALF[2]); return sf.on ? [rd(ax), rd(sf.top), rd(az)] : null; };
+  const squad = Z.squad ? SQUAD_Z.map(k => spot(k * 0.4)) : null; // v7.0 attackers: 3 archers in a line across the zone at the archer's x
+  const ap = squad ? squad[0] : spot(a[1] * 0.4);
+  if (!ap || (squad && squad.some(q => !q))) return { ...fail(squad ? 'Your 3 archers need solid ground (move them)' : 'Archer needs solid stone underfoot'), pos: out.at(-1) };
+  return { ok: true, sizes: plan.blocks.map((_, n) => (zs ? zs[n] : 1)), squad, blocks: out, colors: plan.blocks.map((_, n) => (cl ? cl[n] : DEFAULT_BLOCK)), kinds: plan.blocks.map((_, n) => (kd ? kd[n] : 'block')), archer: ap };
 }
 function inBlock(b, h, p, m = 0.03) { // point inside an oriented box (inverse-rotate by the quaternion)
   const dx = p.x - b[0], dy = p.y - b[1], dz = p.z - b[2], qx = -b[3], qy = -b[4], qz = -b[5], qw = b[6];
@@ -209,7 +252,7 @@ export const PICKUP_R = 1.3;
 const STEP60 = 1 / 60; // = physics.js STEP
 function towerBoxes(b) { // loose AABB per side, for a cheap early-out
   const bx = [0, 1].map(() => [1e9, 1e9, 1e9, -1e9, -1e9, -1e9]);
-  b.forEach((q, i) => { if (parked(q)) return; const B = bx[LAYOUT[i].s]; for (let k = 0; k < 3; k++) { B[k] = Math.min(B[k], q[k] - 1.2); B[k + 3] = Math.max(B[k + 3], q[k] + 1.2); } });
+  b.forEach((q, i) => { if (parked(q)) return; const B = bx[LAYOUT[i].s]; for (let k = 0; k < 3; k++) { B[k] = Math.min(B[k], q[k] - 2.6); B[k + 3] = Math.max(B[k + 3], q[k] + 2.6); } });
   return bx;
 }
 function collide(world, p, shooter, st, t, tb, pickupTaken) {
@@ -220,7 +263,7 @@ function collide(world, p, shooter, st, t, tb, pickupTaken) {
     if (s === shooter && t < 0.35) continue;
     const B = tb[s];
     if (p.x < B[0] || p.y < B[1] || p.z < B[2] || p.x > B[3] || p.y > B[4] || p.z > B[5]) continue;
-    for (let i = 0; i < BLOCKS; i++) if (LAYOUT[i].s === s && !parked(st.phys.b[i]) && inBlock(st.phys.b[i], LAYOUT[i].half, p)) return { kind: 'block', block: i };
+    for (let i = 0; i < BLOCKS; i++) if (LAYOUT[i].s === s && !parked(st.phys.b[i]) && inBlock(st.phys.b[i], halfOf(i, st.phys.k), p)) return { kind: 'block', block: i };
   }
   if (world.solid(p)) return { kind: 'stone' };
   if (p.y <= world.groundH(p.x, p.z)) return { kind: 'ground' };
@@ -329,7 +372,7 @@ export function warpTarget(world, shooter, shot, st) { // -> { who, k, from, p }
 function bounceNormal(hit, p, v, st) { // surface normal for a bounce: ground = up, block = its face nearest the hit point, scenery = straight back
   if (hit.kind === 'ground') return [0, 1, 0];
   if (hit.kind === 'block') {
-    const b = st.phys.b[hit.block], h = LAYOUT[hit.block].half, d = [p.x - b[0], p.y - b[1], p.z - b[2]];
+    const b = st.phys.b[hit.block], h = halfOf(hit.block, st.phys.k), d = [p.x - b[0], p.y - b[1], p.z - b[2]];
     let ax = 0, best = -1; for (let k = 0; k < 3; k++) { const r = Math.abs(d[k]) / h[k]; if (r > best) { best = r; ax = k; } }
     const n = [0, 0, 0]; n[ax] = Math.sign(d[ax]) || 1; return n;
   }
@@ -353,7 +396,8 @@ export function finishShot(prev, shooter, type, shot, phys, rand) {
   }
   for (const i of [0, 1]) hp[i] = Math.max(0, hp[i] - (phys.dmg[i] || 0));
   if (!pickup && !got && --spawnIn <= 0) { pickup = spawnPickup(rand); spawnIn = spawnDelay(rand); }
-  return { hp, ammo, pickup, spawnIn, got, phys: phys.phys, fx: funEffects(prev, shooter, type, shot), big: prev.big || 0, swap: prev.swap || 0, jesus: prev.jesus || [0, 0] };
+  const castle = castleAfter(prev, shooter, hp, phys.phys);
+  return { hp, ammo, pickup, spawnIn, got, phys: phys.phys, fx: funEffects(prev, shooter, type, shot), big: prev.big || 0, swap: prev.swap || 0, jesus: prev.jesus || [0, 0], ...(castle ? { castle } : {}) };
 }
 // v6.1 status effects per player (st.fx[i]): splat (pigeon: no aim preview on their next turn), wrap (toilet roll: skip their next
 // shot), disco (their tower dances through their next shot), big (big head: for the shooter's next `turns` shots at them).
@@ -377,10 +421,40 @@ export function nextTurn(st, shooter) {
   if (st.fx && st.fx[o] && st.fx[o].wrap > 0) { st.fx[o].wrap = 0; return { turn: shooter, skipped: o }; }
   return { turn: o, skipped: -1 };
 }
-export const roundState = n => ({ hp: n.hp, phys: n.phys, ammo: n.ammo, pickup: n.pickup, spawnIn: n.spawnIn, fx: n.fx, big: n.big, swap: n.swap || 0, jesus: n.jesus || [0, 0] }); // what's carried between shots
-export const newRound = (rand, builds = null, opts = {}) => ({ hp: [HP, HP], phys: initialPhys(builds), ammo: [emptyAmmo(), emptyAmmo()], pickup: null, spawnIn: spawnDelay(rand), fx: [emptyFx(), emptyFx()], big: opts.big ? 1 : 0,
-  swap: opts.swap ? 1 : 0, jesus: [0, 1].map(i => (opts.jesus && opts.jesus[i] ? 1 : 0)) }); // v6.2: Arrow Becomes You mode, jesus egg
-export const winnerOf = hp => (hp[0] <= 0 ? 1 : hp[1] <= 0 ? 0 : -1);
+export const roundState = n => ({ hp: n.hp, phys: n.phys, ammo: n.ammo, pickup: n.pickup, spawnIn: n.spawnIn, fx: n.fx, big: n.big, swap: n.swap || 0, jesus: n.jesus || [0, 0], ...(n.castle ? { castle: n.castle } : {}) }); // what's carried between shots
+export const newRound = (rand, builds = null, opts = {}) => withCastle({ hp: [HP, HP], phys: initialPhys(builds), ammo: [emptyAmmo(), emptyAmmo()], pickup: null, spawnIn: spawnDelay(rand), fx: [emptyFx(), emptyFx()], big: opts.big ? 1 : 0,
+  swap: opts.swap ? 1 : 0, jesus: [0, 1].map(i => (opts.jesus && opts.jesus[i] ? 1 : 0)) }, opts.castle, builds); // v6.2: Arrow Becomes You mode, jesus egg
+export const winnerOf = (hp, st) => { const c = st && st.castle; // v7.0 castle: defender dead = attackers win; squad wiped out or turns survived = defender wins
+  if (c) return hp[c.def] <= 0 ? 1 - c.def : hp[1 - c.def] <= 0 || c.done >= c.turns ? c.def : -1;
+  return hp[0] <= 0 ? 1 : hp[1] <= 0 ? 0 : -1; };
+function withCastle(st, opt, builds) { // opt = { def, turns }
+  if (!opt || !(opt.def === 0 || opt.def === 1)) return st;
+  const a = 1 - opt.def, tx = towerX(a), sq = (builds && builds[a] && builds[a].squad) || SQUAD_Z.map(k => [tx, 0, k * 0.4]);
+  st.castle = { def: opt.def, turns: CASTLE_TURNS.includes(opt.turns) ? opt.turns : CASTLE_TURNS[0], done: 0, squad: { hp: [HP, HP, HP], pos: sq.map(p => [...p]), act: 0 } };
+  st.phys.a[a] = [...sq[0]];
+  return st;
+}
+export function pickAttacker(st, who) { // the attacker chooses which of their 3 archers shoots (mutates st); false if not allowed
+  const c = st && st.castle; if (!c || !Number.isInteger(who)) return false;
+  const a = 1 - c.def, q = c.squad;
+  if (who < 0 || who >= SQUAD || who === q.act || !(q.hp[who] > 0)) return false;
+  q.pos[q.act] = [...st.phys.a[a]]; q.hp[q.act] = st.hp[a]; q.act = who; st.phys.a[a] = [...q.pos[who]]; st.hp[a] = q.hp[who];
+  return true;
+}
+function castleAfter(prev, shooter, hp, ph) { // count defender turns, sync the active attacker, bring on the next one after a knockout
+  const c0 = prev.castle; if (!c0) return null;
+  const c = { ...c0, squad: { hp: [...c0.squad.hp], pos: c0.squad.pos.map(p => [...p]), act: c0.squad.act } }, a = 1 - c.def, q = c.squad;
+  if (shooter === c.def) c.done++;
+  q.hp[q.act] = hp[a]; q.pos[q.act] = [...ph.a[a]];
+  if (hp[a] <= 0 && hp[c.def] > 0) { const nx = q.hp.findIndex(h => h > 0); if (nx >= 0) { q.act = nx; ph.a[a] = [...q.pos[nx]]; hp[a] = q.hp[nx]; } }
+  return c;
+}
+export const legResult = (st, w) => { const c = st.castle; return { def: c.def, held: w === c.def ? c.turns : c.done, survived: w === c.def, hp: Math.max(0, st.hp[c.def]), ko: c.squad.hp.filter(h => h <= 0).length }; };
+export function castleOverall(legs) { // whose castle held longer; ties: more HP left, then more attackers knocked out; 2 = draw
+  const by = [0, 1].map(p => legs.find(l => l.def === p)); if (!by[0] || !by[1]) return -1;
+  for (const k of ['held', 'hp', 'ko']) { const d = by[0][k] - by[1][k]; if (d) return d > 0 ? 0 : 1; }
+  return 2;
+}
 // Series: Single (1), Best of 3 or Best of 5. Returns the series winner or -1.
 export const SERIES = [1, 3, 5];
 export const seriesWinnerOf = (score, best) => score.findIndex(w => w >= Math.ceil(best / 2));

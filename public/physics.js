@@ -1,7 +1,7 @@
 // Shared rigid-body tower physics (cannon-es). Runs identically on the server (authoritative) and in the browser (live playback / hot-seat).
 // A run is rebuilt from a snapshot at the start of every shot and driven by a list of timed events derived from the shot's arrows.
 import * as C from 'cannon-es';
-import { HEAVY_MASS, hash01, PARK_Y, LAYOUT, ARROWS, ARCHER_HALF, parked, wrapHit, WARP } from './sim.js';
+import { halfOf, HEAVY_MASS, hash01, PARK_Y, LAYOUT, ARROWS, ARCHER_HALF, parked, wrapHit, WARP } from './sim.js';
 
 export const STEP = 1 / 60, SETTLE = 180, MAX_STEPS = 60 * 26;
 const CHAIR_HALF = 0.36, CHAIR_DELAY = 20;
@@ -66,7 +66,7 @@ export class PhysRun {
     const ground = new C.Body({ mass: 0, material: gm, shape: new C.Box(new C.Vec3(90, 1, 60)), position: new C.Vec3(0, -1, 0) }); w.addBody(ground);
     const sleepy = (b, add = true) => { b.material = sm; b.sleepSpeedLimit = 0.25; b.sleepTimeLimit = 0.3; if (add) w.addBody(b); b.sleep(); return b; };
     this.blocks = LAYOUT.map((l, i) => { // unused build-phase slots stay parked outside the world
-      const s = snap.b[i], b = new C.Body({ mass: 8 * l.half[0] * l.half[1] * l.half[2], shape: new C.Box(v3(l.half)), position: v3(s) });
+      const s = snap.b[i], h = halfOf(i, snap.k), b = new C.Body({ mass: 8 * h[0] * h[1] * h[2], shape: new C.Box(v3(h)), position: v3(s) }); // v7.0: big blocks scale with their size
       b.quaternion.set(s[3], s[4], s[5], s[6]); b.idx = i; sleepy(b, !parked(s));
       if (this.kinds.heavy.includes(i)) { b.mass *= HEAVY_MASS; b.updateMassProperties(); } // v6.3 heavy stone: barely budges
       if (this.kinds.cloud.includes(i)) { b.cloud = true; b.mass = 0; b.type = C.Body.STATIC; b.updateMassProperties(); } // v6.3 cloud: floats until hit
