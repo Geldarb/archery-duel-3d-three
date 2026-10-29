@@ -102,7 +102,7 @@ if (which !== 'online') {
   assert((await J(pm)).preview === false, 'customise: "jesu" is a normal archer');
   await pm.keyboard.type('s'); await sleep(400);
   let jj = await J(pm);
-  assert(jj.preview === true && jj.pvHalos === 1, 'customise: typing "jesus" adds the halo (with a sparkle)');
+  assert(jj.preview === true && jj.pvHalos === 1, `customise: typing "jesus" adds the halo (with a sparkle) (${jj.preview},${jj.pvHalos})`);
   await shot(pm, 'customise-jesus');
   await pm.click('#nameIn', { clickCount: 3 }); await pm.keyboard.type('baldy mordy'); await sleep(400);
   assert(await pm.evaluate(() => __game.baldy().preview) === true && (await J(pm)).preview === false, 'customise: the baldy mordy egg still works');
