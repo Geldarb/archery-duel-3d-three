@@ -175,10 +175,34 @@ export function mummyWrap() { // loo-roll bands wrapped around an archer (feet a
   for (let k = 0; k < 9; k++) { const o = add(g, new THREE.TorusGeometry(k > 6 ? 0.31 : 0.36, 0.06, 6, 20), m, 0, 0.25 + k * 0.17, 0); o.rotation.set(Math.PI / 2 + (k % 2 ? 0.25 : -0.25), 0, 0); }
   return g;
 }
+export function heavyDeco() { // v6.3 heavy stone: dark granite cube with iron bands and rivets
+  const g = new THREE.Group(), st = toon(0x6f7680), band = toon(0x3a3f47), riv = toon(0xc9ced6);
+  add(g, new RoundedBoxGeometry(0.8, 0.8, 0.8, 2, 0.06), st);
+  for (const y of [-0.22, 0.22]) add(g, new THREE.BoxGeometry(0.83, 0.09, 0.83), band, 0, y, 0);
+  for (const x of [-0.3, 0.3]) for (const y of [-0.22, 0.22]) for (const z of [-0.42, 0.42]) add(g, new THREE.SphereGeometry(0.035, 6, 4), riv, x, y, z);
+  return g;
+}
+export function cloudDeco() { // v6.3 cloud: a puffy white cluster of spheres
+  const g = new THREE.Group(), m = toon(0xffffff), sh = toon(0xdfe8f5);
+  for (const [x, y, z, r, mm] of [[0, 0.05, 0, 0.36, m], [-0.28, -0.05, 0.12, 0.27, m], [0.28, -0.04, -0.1, 0.28, m], [0.1, 0.18, 0.2, 0.24, m], [-0.12, 0.16, -0.22, 0.24, m], [0.0, -0.2, 0, 0.3, sh]])
+    add(g, new THREE.SphereGeometry(r, 12, 8), mm, x, y, z);
+  return g;
+}
+export function trampDeco() { // v6.3 trampoline: blue mat on a red rim, little legs, springs
+  const g = new THREE.Group(), rim = toon(0xe0342c), mat = toon(0x2a5bd7), leg = toon(0x9aa3b2);
+  const r = add(g, new THREE.TorusGeometry(0.36, 0.06, 8, 24), rim, 0, 0.3, 0); r.rotation.x = Math.PI / 2;
+  add(g, new THREE.CylinderGeometry(0.34, 0.34, 0.03, 24), mat, 0, 0.3, 0);
+  for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2 + Math.PI / 4; add(g, new THREE.CylinderGeometry(0.03, 0.03, 0.7, 6), leg, Math.cos(a) * 0.3, -0.06, Math.sin(a) * 0.3); }
+  for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4, s = add(g, new THREE.TorusGeometry(0.03, 0.012, 4, 8), leg, Math.cos(a) * 0.35, 0.3, Math.sin(a) * 0.35); s.rotation.y = a; }
+  return g;
+}
 export const PIECE_UI = {
   block: { label: 'Block', icon: svg('<rect x="7" y="7" width="26" height="26" rx="4" fill="#d9b77a" stroke="#111" stroke-width="2"/><path d="M7 20h26M20 7v13" stroke="#8a6a3a" stroke-width="1.6"/>') },
   banana: { label: 'Peel', icon: svg('<rect x="6" y="20" width="28" height="14" rx="3" fill="#d9b77a" stroke="#111" stroke-width="1.6"/><path d="M20 18q-9-1-12-8q6 3 10 3M20 18q9-1 12-8q-6 3-10 3M20 18q-2-7 1-13" stroke="#111" stroke-width="1.4" fill="#ffd84a"/><circle cx="21" cy="5" r="1.6" fill="#6b4423"/>') },
   bouncy: { label: 'Bouncy', icon: svg('<rect x="7" y="13" width="26" height="22" rx="6" fill="#4fc3ff" stroke="#111" stroke-width="1.6"/><path d="M13 13v22M20 13v22M27 13v22" stroke="#ff5aa8" stroke-width="3"/><path d="M5 14l4-8 4 8zM27 14l4-8 4 8z" fill="#ffd84a" stroke="#111" stroke-width="1.2"/><path d="M14 5q6-4 12 0" stroke="#111" stroke-width="1.4" fill="none" stroke-dasharray="2 2"/>') },
+  heavy: { label: 'Heavy', icon: svg('<rect x="6" y="7" width="28" height="27" rx="3" fill="#6f7680" stroke="#111" stroke-width="2"/><path d="M6 14h28M6 27h28" stroke="#3a3f47" stroke-width="3"/><circle cx="11" cy="14" r="1.4" fill="#ddd"/><circle cx="29" cy="27" r="1.4" fill="#ddd"/><path d="M15 19l4 3-2 3" stroke="#3a3f47" stroke-width="1.4" fill="none"/>') },
+  cloud: { label: 'Cloud', icon: svg('<path d="M10 30q-6 0-6-6t7-6q1-8 9-8t9 8q7 0 7 6t-6 6z" fill="#fff" stroke="#111" stroke-width="1.8"/><path d="M12 33l-1 3M20 33l-1 3M28 33l-1 3" stroke="#4fc3ff" stroke-width="1.6"/>') },
+  tramp: { label: 'Tramp', icon: svg('<ellipse cx="20" cy="22" rx="15" ry="5" fill="#2a5bd7" stroke="#e0342c" stroke-width="3"/><path d="M9 25l-2 10M31 25l2 10M20 27v8" stroke="#555" stroke-width="2"/><path d="M20 16v-9M16 11l4-4 4 4" stroke="#111" stroke-width="2" fill="none"/>') },
   archer: { label: 'Archer', icon: svg('<circle cx="20" cy="10" r="6" fill="#ffc9a0" stroke="#111" stroke-width="1.5"/><rect x="13" y="16" width="14" height="14" rx="4" fill="#3b7de0" stroke="#111" stroke-width="1.5"/><path d="M30 8q8 12 0 24" stroke="#8f5326" stroke-width="2.5" fill="none"/><path d="M30 8v24" stroke="#fff" stroke-width="1"/>') },
 };
 export const SPECIAL_UI = {

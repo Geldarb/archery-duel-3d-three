@@ -2,9 +2,9 @@
 import * as THREE from 'three';
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { HP, ARROWS, ARENA_IDS, SHOULDER, SPECIALS, LAYOUT, BUILD_MAX, CELL, BUILD_TIME, BUILD_LEVELS, DIST, validateBuild, defaultPlan, autoPlan, seriesWinnerOf, makeWorld, simulateShot, finishShot, newRound, rng, winnerOf, randomWind, launch, facing, yawOf, initialPhys, G, bigOf, nextTurn, roundState, emptyFx, NECK_Y, PIECES, canFire, isJesus } from './sim.js';
+import { HP, ARROWS, ARENA_IDS, SHOULDER, SPECIALS, LAYOUT, BUILD_MAX, CELL, BUILD_TIME, BUILD_LEVELS, DIST, validateBuild, defaultPlan, autoPlan, seriesWinnerOf, makeWorld, simulateShot, finishShot, newRound, rng, winnerOf, randomWind, launch, facing, yawOf, initialPhys, G, bigOf, nextTurn, roundState, emptyFx, NECK_Y, PIECES, canFire, isJesus, CLOUD_LV } from './sim.js';
 import { PhysRun, shotEvents, STEP } from './physics.js';
-import { SPECIAL_UI, PIECE_UI, pickupModel, bootModel, pigeonModel, discoBallModel, grandmaModel, peelDeco, bouncyDeco, mummyWrap } from './specials.js';
+import { SPECIAL_UI, PIECE_UI, pickupModel, bootModel, pigeonModel, discoBallModel, grandmaModel, peelDeco, bouncyDeco, heavyDeco, cloudDeco, trampDeco, mummyWrap } from './specials.js';
 import { buildArena, heraldry, toon, noOutline } from './world.js';
 import { PALETTE, FLETCH, HELMETS, EMBLEMS, BOWS, TAUNTS, BLOCK_COLORS, DEFAULT_BLOCK, isBlockColor, sanitizeLook, teamColors, hexOf, cleanName, isBaldy } from './looks.js';
 import * as sfx from './audio.js';
@@ -387,10 +387,11 @@ function setKinds(k) { // decorate banana-peel / bouncy-castle build blocks (ind
   decos.length = 0;
   if (!k) return;
   for (const i of k.banana || []) { const m = arena.blockMesh(i); if (!m) continue; const o = peelDeco(); m.add(o); decos.push({ o, i, kind: 'banana' }); }
-  for (const i of k.bouncy || []) { const m = arena.blockMesh(i); if (!m) continue; const o = bouncyDeco(); m.add(o); m.material.visible = false; decos.push({ o, i, kind: 'bouncy', hide: m }); }
+  for (const [kd, mk] of [['bouncy', bouncyDeco], ['heavy', heavyDeco], ['cloud', cloudDeco], ['tramp', trampDeco]]) // v6.3: heavy stone / cloud / trampoline looks
+    for (const i of k[kd] || []) { const m = arena.blockMesh(i); if (!m) continue; const o = mk(); m.add(o); m.material.visible = false; decos.push({ o, i, kind: kd, hide: m }); }
 }
 function bouncySquash(i) {
-  const d = decos.find(x => x.i === i && x.kind === 'bouncy'); if (!d) return;
+  const d = decos.find(x => x.i === i && (x.kind === 'bouncy' || x.kind === 'tramp')); if (!d) return;
   anim(t => { const s = 1 - 0.3 * Math.exp(-t * 5) * Math.cos(t * 26); d.o.scale.set(2 - s, s, 2 - s); if (t > 1) { d.o.scale.set(1, 1, 1); return false; } });
 }
 function looTrail(a) { // a paper ribbon that unrolls behind the loo roll as it flies
@@ -479,6 +480,7 @@ function statusTick(dt) {
 function funFx(P, e, p) { // physics fx events for the v6.1 specials
   const at = p.clone();
   if (e.kind === 'boing') { sfx.boing(); S.fun.boings = (S.fun.boings || 0) + 1; arena.puff(at, 4, 0.3, undefined, 0.8, 0.5, 0.7); floatText('BOING!', at.clone().add(new V(0, 0.7, 0)), '#4fc3ff'); bouncySquash(e.i); }
+  else if (e.kind === 'pop') { sfx.poof(); S.fun.pops = (S.fun.pops || 0) + 1; arena.puff(at, 10, 0.45, undefined, 1, 0.6, 0.8); floatText('POP!', at.clone().add(new V(0, 0.6, 0)), '#ffffff'); } // v6.3 cloud popped
   else if (e.kind === 'slip') { sfx.squeak(); S.fun.slips = (S.fun.slips || 0) + 1; floatText('SLIP!', at.clone().add(new V(0, 1.6, 0)), '#ffe14a'); flash(`${nameOf(e.who)} slipped on a banana peel!`); }
   else if (e.kind === 'pigeon') { sfx.splat(); S.fun.splats = (S.fun.splats || 0) + 1; setSplat(e.who, true); arena.puff(at.clone().add(new V(0, 1.7, 0)), 5, 0.22, undefined, 0.5, 0.3, 0.7); floatText('SPLAT!', at.clone().add(new V(0, 2.3, 0)), '#ffffff'); flash(`${nameOf(e.who)} got pooped on: aim guide splattered!`); }
   else if (e.kind === 'toilet') { sfx.wrapUp(); S.fun.wraps = (S.fun.wraps || 0) + 1; setWrap(e.who, true); floatText('WRAPPED UP!', at.clone().add(new V(0, 2.3, 0)), '#ffffff'); flash(`${nameOf(e.who)} is wrapped up: skips next shot!`); }
@@ -1013,12 +1015,12 @@ const spotRing = new THREE.Mesh(new THREE.RingGeometry(0.34, 0.46, 28).rotateX(-
 spotRing.visible = false; spotRing.renderOrder = 5; scene.add(spotRing);
 const buildGrid = new THREE.GridHelper(CELL * 6, 6, 0xffffff, 0xffffff); // the snap grid on the ground around your tower
 buildGrid.material.transparent = true; buildGrid.material.opacity = 0.55; buildGrid.material.depthWrite = false; buildGrid.visible = false; scene.add(buildGrid);
-const colHeight = (plan, gx, gz) => plan.blocks.reduce((n, c) => n + (c[0] === gx && c[1] === gz ? 1 : 0), 0);
+const colHeight = (plan, gx, gz) => plan.blocks.reduce((n, c) => (c[0] === gx && c[1] === gz ? Math.max(n, (c.length > 2 ? c[2] : n) + 1) : n), 0); // v6.3: next free level (clouds leave gaps)
 const pieceTool = () => (Object.hasOwn(PIECES, BS.tool) ? BS.tool : 'block');
 const kindsOf = plan => plan.kinds || plan.blocks.map(() => 'block');
 const pieceCount = (plan, k) => (k === 'block' ? plan.blocks.length : kindsOf(plan).filter(x => x === k).length);
 function withBlock(s, plan, cell, kind = pieceTool()) { // add a block on top of that column; if it lands under the archer, the archer climbs on top of it
-  const c = [cell[0], cell[1], colHeight(plan, cell[0], cell[1])], before = BS.res[s] && BS.res[s].ok ? BS.res[s].archer[1] : 0;
+  const c = [cell[0], cell[1], Math.max(colHeight(plan, cell[0], cell[1]), kind === 'cloud' ? CLOUD_LV : 0)], before = BS.res[s] && BS.res[s].ok ? BS.res[s].archer[1] : 0;
   const colors = [...(plan.colors || plan.blocks.map(() => DEFAULT_BLOCK)), BS.color || DEFAULT_BLOCK]; // v5.3: the selected colour goes on the new block
   const kinds = [...kindsOf(plan), kind]; // v6.1: banana peel / bouncy castle pieces
   let next = { blocks: [...plan.blocks, c], colors, kinds, archer: plan.archer }, r = validateBuild(s, next), climbed = false;
@@ -1099,7 +1101,7 @@ function renderBuildUi() {
   document.querySelectorAll('#bTool button').forEach(b => {
     b.classList.toggle('on', b.dataset.tool === BS.tool); b.disabled = lock;
     const t = b.dataset.tool, c = b.querySelector('.cnt');
-    if (c && PIECES[t]) { const n = pieceCount(plan, t), mx = t === 'block' ? BUILD_MAX : PIECES[t].max; c.textContent = t === 'block' ? `${BUILD_MAX - n}` : `${mx - n}`; b.classList.toggle('out', n >= mx); }
+    if (c && PIECES[t]) { const n = plan.blocks.length; c.textContent = t === 'block' ? `${BUILD_MAX - n}` : ''; c.hidden = t !== 'block'; b.classList.toggle('out', n >= BUILD_MAX); } // v6.3: one shared 40-block budget
   });
   $('#bReady').textContent = BS.online ? (lock ? 'Waiting…' : 'Ready') : s ? 'Fight!' : 'Done';
   $('#bReady').disabled = lock; $('#bSkip').disabled = lock;
@@ -1122,7 +1124,7 @@ function buildTry(cell) {
   if (kind !== 'block' && pieceCount(plan, kind) >= PIECES[kind].max) { buildMsg(`Only ${PIECES[kind].max} ${PIECES[kind].name.toLowerCase()} pieces`, true); return false; }
   const { next, r, climbed } = withBlock(s, plan, cell);
   if (!r.ok) { buildMsg(r.at < 0 ? 'That would bury your archer' : r.err, true); return false; }
-  setPlan(next, r); if (kind === 'bouncy') sfx.boing(); else if (kind === 'banana') sfx.squeak(); else sfx.thunk();
+  setPlan(next, r); if (kind === 'bouncy' || kind === 'tramp') sfx.boing(); else if (kind === 'cloud') sfx.poof(); else if (kind === 'banana') sfx.squeak(); else sfx.thunk();
   buildMsg(`${climbed ? 'Archer climbed up' : kind === 'block' ? 'Block placed' : PIECES[kind].name + ' placed'} · ${BUILD_MAX - next.blocks.length} left · tap again to stack`);
   if (kind !== 'block' && pieceCount(next, kind) >= PIECES[kind].max) { BS.tool = 'block'; buildMsg(`No ${PIECES[kind].name.toLowerCase()} pieces left · back to blocks`); renderBuild(); return true; }
   if (next.blocks.length < BUILD_MAX) { const w = withBlock(s, next, cell); if (w.r.ok) { BS.ghost = { cell, ok: true, pos: w.r.blocks.at(-1) }; renderBuild(); } }
@@ -1190,11 +1192,11 @@ $('#bUndo').onclick = () => {
   if (BS.online && sock) sock.emit('plan', { plan: BS.plans[s], ready: false });
   buildMsg('Undone'); renderBuild();
 };
-$('#bTool').innerHTML = ['block', 'banana', 'bouncy', 'archer'].map(t => `<button data-tool="${t}" title="${PIECES[t] ? PIECES[t].name || 'Block' : 'Move archer'}${PIECES[t] ? ` (max ${PIECES[t].max})` : ''}">${PIECE_UI[t].icon}<small>${PIECE_UI[t].label}</small>${PIECES[t] ? '<em class="cnt"></em>' : ''}</button>`).join(''); // v6.1 build palette
+$('#bTool').innerHTML = ['block', 'heavy', 'cloud', 'tramp', 'banana', 'bouncy', 'archer'].map(t => `<button data-tool="${t}" title="${PIECES[t] ? PIECES[t].name || 'Block' : 'Move archer'}">${PIECE_UI[t].icon}<small>${PIECE_UI[t].label}</small>${PIECES[t] ? '<em class="cnt"></em>' : ''}</button>`).join(''); // v6.1 build palette
 document.querySelectorAll('#bTool button').forEach(b => b.onclick = () => {
   BS.tool = b.dataset.tool; BS.ghost = null;
   const t = BS.tool;
-  buildMsg(t === 'archer' ? 'Tap the ground or a block top to move your archer' : t === 'banana' ? `Banana peel: archers slip off it (max ${PIECES.banana.max})` : t === 'bouncy' ? `Bouncy castle: arrows and archers bounce off it (max ${PIECES.bouncy.max})` : HINT); renderBuild();
+  buildMsg(t === 'archer' ? 'Tap the ground or a block top to move your archer' : t === 'banana' ? 'Banana peel: archers slip off it' : t === 'bouncy' ? 'Bouncy castle: arrows and archers bounce off it' : t === 'heavy' ? 'Heavy stone: arrows barely move it' : t === 'cloud' ? 'Cloud: floats in the air (build on it!), pops when hit' : t === 'tramp' ? 'Trampoline: arrows and archers bounce off at wild angles' : HINT); renderBuild();
 });
 $('#bColors').innerHTML = BLOCK_COLORS.map(c => `<button data-c="${c.id}" role="radio" aria-label="${c.name} blocks" title="${c.name}" style="background-color:${css(c.hex)}"></button>`).join('');
 function pickColor(id) { // v5.3: colour for the next blocks you place (blocks already placed keep theirs)

@@ -242,3 +242,9 @@ button.icon { flex: none; width: 44px; height: 44px; padding: 0; border-radius: 
 #splat::after { content: 'SPLAT! Aim guide hidden'; position: absolute; left: 50%; top: 28%; transform: translateX(-50%) rotate(-4deg); font-size: 20px; font-weight: 800; color: #fff; -webkit-text-stroke: 1.2px #2b2f45; text-shadow: 0 2px 0 #2b2f45; white-space: nowrap; }
 @keyframes splatIn { from { transform: scale(1.3); opacity: 0; } }
 #funBtns button { white-space: nowrap; }
+
+/* v6.3: 7 build tools: compact so the row fits a 360 px portrait phone */
+#bTool button { min-width: 0; padding: 2px 4px; flex: 1 1 0; }
+#bTool button svg { width: 22px; height: 22px; }
+#bTool button small { font-size: 9px; }
+@media (max-width: 400px) { #bTool button { min-width: 0; padding: 2px 2px; } #bTool button + button { border-left-width: 2px; } }
