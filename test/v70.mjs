@@ -27,7 +27,24 @@ const big = { blocks: [[0, 0, 0], [-3, -3, 0]], sizes: [2, 1], kinds: ['block', 
     assert(rc.ok && sim.planCost(c) === sim.CASTLE_MAX && !rc.squad, `rules: side ${s} auto castle costs 80 (${rc.err || ''})`);
     assert(rv.ok && sim.planCost(cv) <= sim.COVER_MAX && rv.squad && rv.squad.length === 3, `rules: side ${s} attacker cover <= 10 + 3 archer spots (${rv.err || ''})`);
     assert(!sim.validateBuild(s, c, { def: 1 - s }).ok, `rules: side ${s} attacker cannot build an 80-block castle`);
+    const add = (p, b) => ({ ...p, blocks: [b], sizes: [1], kinds: ['block'], colors: ['sand'] });
+    const zs = rv.squad.map(q => q[2]); assert(Math.max(...zs) - Math.min(...zs) >= 10, `rules: side ${s} attackers start spread out (${zs})`);
+    const mv = { ...cv, squad: [[s ? 11 : -11, -16], [s ? -12 : 12, 16], [0, 0]] }, rm = sim.validateBuild(s, mv, { def: 1 - s });
+    assert(rm.ok && Math.abs(rm.squad[0][0] - rm.squad[1][0]) > 9, `rules: side ${s} each attacker moves anywhere in the bigger zone (${rm.err || ''})`);
+    assert(/close/.test(sim.validateBuild(s, { ...cv, squad: [[0, 0], [1, 1], [0, 9]] }, { def: 1 - s }).err) && /zone/.test(sim.validateBuild(s, { ...cv, squad: [[0, 0], [0, 17], [0, 9]] }, { def: 1 - s }).err), `rules: side ${s} attackers can't stack up or leave the zone`);
+    assert(sim.validateBuild(s, add(cv, [-5, 7, 0]), { def: 1 - s }).ok && !sim.validateBuild(s, add(c, [0, 5, 0]), { def: s }).ok, `rules: side ${s} cover area grew, castle zone unchanged`);
   }
+  // v7.0.1: the defender can hit a waiting attacker (not only the active one)
+  const cr = [0, 1].map(s => sim.validateBuild(s, sim.autoPlan(s, 0, { def: 0 }), { def: 0 }));
+  const st = sim.newRound(sim.rng(5), cr, { castle: { def: 0, turns: 10 } });
+  const act = st.phys.a[1]; st.castle.squad.pos[1] = [act[0] - 3, 0, act[2] * (act[0] - 3 - st.phys.a[0][0]) / (act[0] - st.phys.a[0][0])]; // a waiting attacker on the defender's line
+  const w = sim.makeWorld('field'); let hit = null;
+  for (let pd = 2; pd <= 40 && !hit; pd++) for (let pw = 0.3; pw <= 1 && !hit; pw += 0.004) { const r = sim.simulateShot(w, 0, { pitch: pd * Math.PI / 180, power: pw }, { x: 0, z: 0 }, 'normal', st); if (r.arrows[0].res.sq === 1) hit = r; }
+  assert(hit, 'rules: a defender arrow can hit a waiting attacker');
+  const nx = sim.finishShot(st, 0, 'normal', hit, { phys: st.phys, dmg: [0, 0] }, sim.rng(1));
+  assert(nx.castle.squad.hp[1] < sim.HP && nx.hp[1] === st.hp[1], `rules: the waiting attacker loses HP, the active one doesn't (${nx.castle.squad.hp})`);
+  assert(sim.pickAttacker(st, 2) && st.castle.squad.act === 2 && st.phys.a[1][2] === st.castle.squad.pos[2][2], 'rules: defender target switch moves the line of fire');
+  st.castle.squad.hp[0] = 0; assert(!sim.pickAttacker(st, 0), 'rules: a dead attacker cannot be picked');
 }
 
 // ---------------- browser ----------------
@@ -95,6 +112,15 @@ if (which !== 'rules') {
   await P.evaluate(() => { __game.buildTool('block'); __game.buildPlace(1, 0); }); await sleep(900);
   assert(await noScroll(P), 'castle build 360x640: no scroll');
   await shot(P, 'castle-build');
+  await P.evaluate(() => { __game.buildTool('archer'); __game.buildTool('archer'); }); // pick archer 2
+  assert(await P.evaluate(() => __game.bs().sq === 1 && __game.buildArcher(-10, 4) && __game.bs().plans[1].squad[1][0] === -10), 'castle: attacker 2 moved on its own (tap 🏹 again to pick)');
+  await P.setViewport({ width: 740, height: 360, isMobile: true, hasTouch: true }); await sleep(1200);
+  const sp = await P.evaluate(() => __game.squadPos());
+  const onScreen = await P.evaluate(() => [...__game.squadPos(), __game.archers[1].root.position.toArray()].map(p => { const v = __game.archers[1].root.position.clone().set(p[0], p[1] + 1, p[2]).project(__game.camera); return [p.map(n => n.toFixed(1)).join(','), v.x.toFixed(2), v.y.toFixed(2), Math.abs(v.x) < 1 && Math.abs(v.y) < 1]; }));
+  assert(sp.length === 2 && onScreen.every(q => q[3]), `castle build 740x360: all 3 spread attackers in frame (${JSON.stringify(onScreen)})`);
+  await shot(P, 'castle-build-spread');
+  await P.setViewport({ width: 360, height: 640, isMobile: true, hasTouch: true }); await sleep(600);
+  const on2 = await P.evaluate(() => [...__game.squadPos(), __game.archers[1].root.position.toArray()].map(p => { const v = __game.archers[1].root.position.clone().set(p[0], p[1] + 1, p[2]).project(__game.camera); return [p.map(n => n.toFixed(1)).join(','), v.x.toFixed(2), v.y.toFixed(2), Math.abs(v.x) < 1 && Math.abs(v.y) < 1]; })); assert(on2.every(q => q[3]), `castle build 360x640: all 3 attackers in frame (${JSON.stringify(on2)})`);
   await P.evaluate(() => __game.buildSkip()); await P.waitForFunction(() => __game.S.phase === 'aim', { timeout: 20000 }); await sleep(900);
   await P.setViewport({ width: 740, height: 360, isMobile: true, hasTouch: true }); await sleep(900);
   let cs = await P.evaluate(() => ({ c: __game.castle(), turn: __game.S.turn, n: __game.squadN(), sq: !document.querySelector('#squad').classList.contains('hidden') }));
@@ -102,6 +128,19 @@ if (which !== 'rules') {
   assert(await P.evaluate(() => __game.pickSquad(2) && __game.castle().squad.act === 2 && __game.squadN() === 2), 'castle: attacker picks archer 3');
   assert(await noScroll(P), 'castle battle 740x360: no scroll');
   await shot(P, 'castle-battle');
+  const miss = { pitch: 0.05, power: 0.3 };
+  await P.evaluate(a => __game.shootAim(a), miss); await settle(P); await sleep(400);
+  const dv = await P.evaluate(() => ({ t: __game.S.turn, vis: !document.querySelector('#squad').classList.contains('hidden'), lab: document.querySelector('#squad').textContent }));
+  assert(dv.t === 0 && dv.vis && /🎯A1/.test(dv.lab), 'castle: defender gets a 🎯 target picker');
+  assert(await P.evaluate(() => __game.pickSquad(1) && __game.castle().squad.act === 1), 'castle: defender targets attacker 2');
+  const tz = await P.evaluate(() => __game.castle().squad.pos[1][2]), fz = await P.evaluate(() => { __game.camPreset('enemy'); return __game.cam(); });
+  assert(Math.abs(fz.T[2] - tz) < 0.5 && Math.abs(fz.T[0] - 15) < 1, `castle cam: defender's Enemy view points at the target (${fz.T.map(v => v.toFixed(1))})`);
+  await P.evaluate(() => __game.camPreset('me'));
+  await P.evaluate(a => __game.shootAim(a), miss); await settle(P); await sleep(400);
+  const ac = await P.evaluate(() => { __game.camPreset('enemy'); const c = __game.cam(); __game.camPreset('me'); return c; });
+  assert(Math.abs(ac.T[0] + 15) < 1, 'castle cam: attackers\' Enemy view points at the castle');
+  await P.evaluate(() => { const c = __game.castle(); c.squad.hp[2] = 0; __game.pickType('normal'); });
+  assert(await P.evaluate(() => !__game.pickSquad(2) && document.querySelector('#squad button[data-k="2"]').disabled), 'castle: dead attacker drops out of the picker');
   await P.evaluate(() => __game.setHp(0, 1)); const aim = await P.evaluate(() => __game.findHit()); assert(aim, 'castle: found a hit on the defender');
   await P.evaluate(a => __game.shootAim(a), aim);
   await P.waitForFunction(() => __game.S.phase === 'pass' || __game.S.phase === 'build', { timeout: 90000, polling: 200 }); await sleep(300);
@@ -141,6 +180,9 @@ if (which !== 'rules') {
   const aimB = await B.evaluate(() => { for (let pw = 0.3; pw <= 1; pw += 0.05) return { pitch: 0.5, power: 0.6 }; });
   await B.evaluate(a => __game.shootAim(a), aimB); await Promise.all([A, B].map(X => X.waitForFunction(() => !__game.S.play && __game.S.turn === 0, { timeout: 90000, polling: 200 })));
   assert(who === 1 && await A.evaluate(() => __game.castle().squad.act) === 1, 'online castle: the picked attacker is synced by the server');
+  assert(await A.evaluate(() => __game.pickSquad(2)), 'online castle: defender targets attacker 3');
+  await A.evaluate(a => __game.shootAim(a), aimB); await Promise.all([A, B].map(X => X.waitForFunction(() => !__game.S.play && __game.S.turn === 1, { timeout: 90000, polling: 200 })));
+  assert(await B.evaluate(() => __game.castle().squad.act) === 2, 'online castle: the defender\'s target is synced by the server');
   await b.close();
 }
 assert(!errors.length, 'no page errors' + (errors.length ? ': ' + errors.slice(0, 4).join(' | ') : ''));

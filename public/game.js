@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { HP, ARROWS, ARENA_IDS, SHOULDER, SPECIALS, LAYOUT, BUILD_MAX, CELL, BUILD_TIME, BUILD_LEVELS, DIST, validateBuild, defaultPlan, autoPlan, seriesWinnerOf, makeWorld, simulateShot, finishShot, newRound, rng, winnerOf, randomWind, launch, facing, yawOf, initialPhys, G, bigOf, nextTurn, roundState, emptyFx, NECK_Y, PIECES, canFire, isJesus, CLOUD_LV, CASTLE_TIME, planCost, footTop, zoneOf, sizesOf, pickAttacker, legResult, castleOverall } from './sim.js';
+import { HP, ARROWS, ARENA_IDS, SHOULDER, SPECIALS, LAYOUT, BUILD_MAX, CELL, BUILD_TIME, BUILD_LEVELS, DIST, validateBuild, defaultPlan, autoPlan, seriesWinnerOf, makeWorld, simulateShot, finishShot, newRound, rng, winnerOf, randomWind, launch, facing, yawOf, initialPhys, G, bigOf, nextTurn, roundState, emptyFx, NECK_Y, PIECES, canFire, isJesus, CLOUD_LV, CASTLE_TIME, SQUAD_Z, planCost, footTop, zoneOf, sizesOf, pickAttacker, legResult, castleOverall } from './sim.js';
 import { PhysRun, shotEvents, STEP } from './physics.js';
 import { SPECIAL_UI, PIECE_UI, pickupModel, bootModel, pigeonModel, discoBallModel, grandmaModel, peelDeco, bouncyDeco, heavyDeco, cloudDeco, trampDeco, mummyWrap } from './specials.js';
 import { buildArena, heraldry, toon, noOutline } from './world.js';
@@ -340,6 +340,10 @@ function land(a) {
   } else if (r.kind === 'block') { // the arrow stays stuck in the stone it hit (and moves with it)
     if (!sp) { a.m.updateMatrixWorld(); arena.blockMesh(r.block).attach(a.m); }
     sfx.crack();
+  } else if (r.sq !== undefined) { // v7.0.1: a waiting attacker is hit
+    const m = squadMeshes.find(x => x.userData.k === r.sq); if (!sp && m) { a.m.updateMatrixWorld(); m.attach(a.m); }
+    floatText(`−${r.dmg}`, new V(...r.pos).add(new V(0, 0.4, 0)), r.kind === 'head' ? '#ffd84a' : '#fff'); flash(r.kind === 'head' ? `HEADSHOT on attacker ${r.sq + 1}!` : `Attacker ${r.sq + 1} hit!`);
+    sfx.grunt(); shake = 0.25;
   } else if (r.who !== undefined) {
     if (!sp) { a.m.updateMatrixWorld(); archers[r.who].root.attach(a.m); }
     S.hp[r.who] = Math.max(0, S.hp[r.who] - r.dmg);
@@ -1031,13 +1035,21 @@ ghost.add(new THREE.LineSegments(new THREE.EdgesGeometry(ghost.geometry), noOutl
 ghost.visible = false; ghost.renderOrder = 5; scene.add(ghost);
 const spotRing = new THREE.Mesh(new THREE.RingGeometry(0.34, 0.46, 28).rotateX(-Math.PI / 2), noOutline(new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.9, depthWrite: false })));
 spotRing.visible = false; spotRing.renderOrder = 5; scene.add(spotRing);
-const buildGrid = new THREE.GridHelper(CELL * 6, 6, 0xffffff, 0xffffff); // the snap grid on the ground around your tower
-buildGrid.material.transparent = true; buildGrid.material.opacity = 0.55; buildGrid.material.depthWrite = false; buildGrid.visible = false; scene.add(buildGrid);
+const buildGrid = new THREE.Group(), gridMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false }); // the snap grid on the ground around your tower
+buildGrid.visible = false; scene.add(buildGrid);
+function sizeGrid(gx, gz) { // v7.0.1: grid matches the zone (castle / attackers' zone are bigger and not square)
+  const key = gx + 'x' + gz; if (buildGrid.userData.key === key) return; buildGrid.userData.key = key;
+  buildGrid.children.forEach(c => c.geometry.dispose()); buildGrid.clear();
+  const v = [], X = gx * CELL, Z = gz * CELL;
+  for (let i = -gx; i <= gx; i++) v.push(i * CELL, 0, -Z, i * CELL, 0, Z);
+  for (let j = -gz; j <= gz; j++) v.push(-X, 0, j * CELL, X, 0, j * CELL);
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3)); buildGrid.add(new THREE.LineSegments(g, gridMat));
+}
 const pieceTool = () => (Object.hasOwn(PIECES, BS.tool) ? BS.tool : 'block');
 const kindsOf = plan => plan.kinds || plan.blocks.map(() => 'block');
 const pieceCount = (plan, k) => (k === 'block' ? plan.blocks.length : kindsOf(plan).filter(x => x === k).length);
 function withBlock(s, plan, cell, kind = pieceTool()) { // add a block on top of that column; if it lands under the archer, the archer climbs on top of it
-  const z = sizeOf(), G = zone(s).grid, cc = v => Math.min(G - z, Math.max(-G, v - Math.floor((z - 1) / 2))), gx = cc(cell[0]), gz = cc(cell[1]); // v7.0: big blocks centre on the tapped column
+  const z = sizeOf(), Zn = zone(s), cc = (v, G) => Math.min(G - z, Math.max(-G, v - Math.floor((z - 1) / 2))), gx = cc(cell[0], Zn.grid), gz = cc(cell[1], Zn.gz); // v7.0: big blocks centre on the tapped column
   const c = [gx, gz, Math.max(footTop(plan, gx, gz, z), kind === 'cloud' ? CLOUD_LV : 0)], before = BS.res[s] && BS.res[s].ok ? BS.res[s].archer[1] : 0;
   const colors = [...(plan.colors || plan.blocks.map(() => DEFAULT_BLOCK)), BS.color || DEFAULT_BLOCK]; // v5.3: the selected colour goes on the new block
   const kinds = [...kindsOf(plan), kind]; // v6.1: banana peel / bouncy castle pieces
@@ -1062,7 +1074,7 @@ function enterBuild(m) {
   Object.assign(S, { mode: S.builder ? 'hot' : m.mode, me: m.me || 0, turn: m.turn || 0, hp: [...st.hp], st, wind: { x: 0, z: 0 }, arenaId: m.arenaId, phase: hot && !S.builder ? 'pass' : 'build', winner: -1, play: null, queue: [], focus: null, draw: 0,
     best: m.best || 1, score: [...(m.score || [0, 0])], seriesWinner: -1, pending: null, cardT: 0, builds: null });
   pickupKey = '-'; showPickup(null, false); S.last = [null, null]; camExit(true); resetViews();
-  Object.assign(BS, { cmode: m.castle ? { def: m.castle.def } : null, sizes: {}, zoom: 1, side: hot ? 0 : S.me, tool: 'block', plans: [defaultPlan(), defaultPlan()], hist: [[], []], ghost: null, yaw: 0, online: !hot, ends: performance.now() + (m.time || (m.castle ? CASTLE_TIME : BUILD_TIME)) * 1000,
+  Object.assign(BS, { sq: 0, cmode: m.castle ? { def: m.castle.def } : null, sizes: {}, zoom: 1, side: hot ? 0 : S.me, tool: 'block', plans: [defaultPlan(), defaultPlan()], hist: [[], []], ghost: null, yaw: 0, online: !hot, ends: performance.now() + (m.time || (m.castle ? CASTLE_TIME : BUILD_TIME)) * 1000,
     locked: false, sent: false, oppReady: false, m, msg: '', err: false, secs: -1, color: towerColor(hot ? 0 : S.me) });
   BS.res = [0, 1].map(i => vb(i, BS.plans[i]));
   archers.forEach((a, i) => a.pose(0.5, 0, true, 'normal'));
@@ -1110,7 +1122,7 @@ function renderBuild() { // 3D: your own build (the other side stays hidden unti
   ghost.scale.setScalar(sizeOf());
   if (ghost.visible) { ghost.position.set(...g.pos); ghost.material = g.ok ? ghostMats.ok : ghostMats.bad; }
   spotRing.visible = S.phase === 'build' && BS.tool === 'archer';
-  buildGrid.visible = S.phase === 'build' && BS.tool !== 'archer' && !(BS.locked || BS.sent); buildGrid.position.set(TX(s), 0.03, 0); buildGrid.scale.setScalar(zone(s).grid / 3);
+  buildGrid.visible = S.phase === 'build' && BS.tool !== 'archer' && !(BS.locked || BS.sent); buildGrid.position.set(TX(s), 0.03, 0); sizeGrid(zone(s).grid, zone(s).gz);
   if (spotRing.visible) spotRing.position.set(ph.a[s][0], ph.a[s][1] + 0.03, ph.a[s][2]);
   renderBuildUi();
 }
@@ -1129,7 +1141,7 @@ function renderBuildUi() {
     const zb = b.querySelector('.sz'), z = BS.sizes[t] || 1; if (zb) { zb.textContent = `${z}×${z}`; zb.hidden = z < 2; }
   });
   $('#bReady').textContent = S.builder ? 'Exit' : BS.online ? (lock ? 'Waiting…' : 'Ready') : s ? 'Fight!' : 'Done';
-  show('#bPreset', !BS.cmode); $('#bPreset').disabled = lock;
+  show('#bPreset', !BS.cmode); renderSq(); $('#bPreset').disabled = lock;
   $('#bReady').disabled = lock; $('#bSkip').disabled = lock;
   document.querySelectorAll('#bColors button').forEach(b => { b.classList.toggle('on', b.dataset.c === BS.color); b.setAttribute('aria-checked', b.dataset.c === BS.color); b.disabled = lock; });
   $('#bOpp').textContent = BS.online ? (BS.oppReady ? 'Opponent ready ✓' : 'Opponent building…') : '';
@@ -1159,9 +1171,11 @@ function buildTry(cell) {
 function buildArcherTry(spot) {
   const s = BS.side, plan = BS.plans[s];
   if (S.phase !== 'build' || BS.locked || BS.sent) return false;
-  const next = { ...plan, archer: spot }, r = vb(s, next);
+  const k = BS.sq || 0, sq = zone(s).squad ? (plan.squad || SQUAD_Z.map(z => [plan.archer[0], z])).map(q => [...q]) : null; // v7.0.1: move the selected attacker
+  if (sq) sq[k] = spot;
+  const next = sq ? { ...plan, squad: sq, archer: sq[0] } : { ...plan, archer: spot }, r = vb(s, next);
   if (!r.ok) { buildMsg(r.err, true); return false; }
-  setPlan(next, r); buildMsg('Archer moved'); return true;
+  setPlan(next, r); buildMsg(sq ? `Archer ${k + 1} moved · tap 🏹 again to pick another` : 'Archer moved'); return true;
 }
 function setGhost(cell) {
   const s = BS.side, plan = BS.plans[s];
@@ -1198,7 +1212,7 @@ function buildTap(x, y) {
 function buildCam() {
   const s = BS.side, f = s ? -1 : 1, portrait = camera.aspect < 0.9, res = BS.res[s];
   const h = res && res.ok ? Math.max(res.archer[1], ...res.blocks.map(b => b[1] + CELL / 2)) : 0; // framing follows your tower as it grows
-  const z = (BS.zoom || 1) * (zone(s).castle ? 1.5 : 1), R = ((portrait ? 7.6 : 7.4) + h * 0.4) * z, a = Math.atan2(f * 0.85, 1) + BS.yaw, T = new V(TX(s), (portrait ? 0.9 : 0.6) + h * 0.55, 0);
+  const z = (BS.zoom || 1) * (zone(s).castle ? 1.5 : zone(s).squad ? (portrait ? 2.3 : 1.75) : 1), R = ((portrait ? 7.6 : 7.4) + h * 0.4) * z, a = Math.atan2(f * 0.85, 1) + BS.yaw, T = new V(TX(s), (portrait ? 0.9 : 0.6) + h * 0.55, 0);
   return [T.clone().add(new V(Math.sin(a) * R, ((portrait ? 5.4 : 3.8) + h * 0.3) * z, Math.cos(a) * R)), T]; // high 3/4 view of your whole build zone
 }
 function buildTick() { // 60 s per build (hot-seat: per player; online: both at once, enforced by the server). At 0 the build locks as it is
@@ -1221,7 +1235,9 @@ $('#bUndo').onclick = () => {
 };
 $('#bTool').innerHTML = ['block', 'heavy', 'cloud', 'tramp', 'banana', 'bouncy', 'archer'].map(t => `<button data-tool="${t}" title="${PIECES[t] ? PIECES[t].name || 'Block' : 'Move archer'}">${PIECE_UI[t].icon}<small>${PIECE_UI[t].label}</small>${PIECES[t] ? '<em class="cnt"></em><b class="sz" hidden></b>' : ''}</button>`).join(''); // v6.1 build palette
 document.querySelectorAll('#bTool button').forEach(b => b.onclick = () => {
-  const t = b.dataset.tool, again = BS.tool === t && PIECES[t]; BS.tool = t; BS.ghost = null;
+  const t = b.dataset.tool, again = BS.tool === t && PIECES[t], re = BS.tool === t && t === 'archer' && zone(BS.side).squad; BS.tool = t; BS.ghost = null;
+  if (re) BS.sq = ((BS.sq || 0) + 1) % 3;
+  if (t === 'archer' && zone(BS.side).squad) { buildMsg(`Tap the ground to move archer ${(BS.sq || 0) + 1} · tap 🏹 again for the next one`); renderBuild(); renderSq(); return; }
   if (again) { const z = BS.sizes[t] = (BS.sizes[t] || 1) % 3 + 1; buildMsg(`${z}×${z} ${(PIECES[t].name || 'Block').toLowerCase()} · costs ${z * z} · tap the icon again to resize`); renderBuild(); return; } // v7.0 size picker
   buildMsg(t === 'archer' ? 'Tap the ground or a block top to move your archer' : t === 'banana' ? 'Banana peel: archers slip off it' : t === 'bouncy' ? 'Bouncy castle: arrows and archers bounce off it' : t === 'heavy' ? 'Heavy stone: arrows barely move it' : t === 'cloud' ? 'Cloud: floats in the air (build on it!), pops when hit' : t === 'tramp' ? 'Trampoline: arrows and archers bounce off at wild angles' : HINT); renderBuild();
 });
@@ -1279,19 +1295,20 @@ function renderPresets() {
 $('#presetRows').onclick = e => { const b = e.target.closest('button'); if (!b) return; const i = +b.dataset.i; if (b.dataset.a === 'save') presetSave(i); else if (b.dataset.a === 'load') presetLoad(i); else presetDel(i); };
 $('#bPreset').onclick = () => { if (BS.locked || BS.sent) return; renderPresets(); $('#presetTitle').textContent = S.builder ? 'Save / load a preset' : 'Load a preset'; show('#presets', true); };
 $('#presetClose').onclick = () => show('#presets', false);
+function renderSq() { const b = document.querySelector('#bTool button[data-tool="archer"]'); if (!b) return; let e = b.querySelector('.sz'); if (!e) { e = document.createElement('b'); e.className = 'sz'; b.append(e); } e.textContent = `#${(BS.sq || 0) + 1}`; e.hidden = !(BS.cmode && zone(BS.side).squad); }
 
 // ---------- v7.0 Defend the Castle: the attackers' squad ----------
 const squadMeshes = [];
 function showSquad(side, pos, act = -1, hp = null) { // the 2 waiting attackers (the active one is archers[side])
   while (squadMeshes.length) dispose(squadMeshes.pop());
   if (!pos) return;
-  pos.forEach((p, k) => { if (!p || k === act || (hp && !(hp[k] > 0))) return; const a = makeArcher(side, looks[side], cols[side]); a.root.position.set(...p); a.root.rotation.y = archers[side].root.rotation.y; a.pose(0.5, 0, true, 'normal'); squadMeshes.push(a.root); });
+  pos.forEach((p, k) => { if (!p || k === act || (hp && !(hp[k] > 0))) return; const a = makeArcher(side, looks[side], cols[side]); a.root.position.set(...p); a.root.rotation.y = archers[side].root.rotation.y; a.pose(0.5, 0, true, 'normal'); a.root.userData.k = k; squadMeshes.push(a.root); });
 }
 const castleSquad = () => { const c = S.st && S.st.castle; if (!c) return showSquad(0, null); showSquad(1 - c.def, c.squad.pos, c.squad.act, c.squad.hp); };
 const legText = l => (l ? `${nameOf(l.def)}'s castle ${l.survived ? `held ${l.held} turns` : `fell after ${l.held} turn${l.held === 1 ? '' : 's'}`}` : '');
 function pickSquad(k) {
   if (S.phase !== 'aim' || !myTurn() || S.play || !pickAttacker(S.st, k)) return false;
-  S.hp = [...S.st.hp]; placeArchers(S.st.phys.a); castleSquad(); camJump = true; sfx.thunk(); flash(`Archer ${k + 1} steps up`); updateHud(); return true;
+  S.hp = [...S.st.hp]; placeArchers(S.st.phys.a); castleSquad(); camJump = true; sfx.thunk(); flash(S.turn === S.st.castle.def ? `Target: attacker ${k + 1}` : `Archer ${k + 1} steps up`); updateHud(); return true;
 }
 $('#squad').onclick = e => { const b = e.target.closest('button'); if (b) pickSquad(+b.dataset.k); };
 
@@ -1326,8 +1343,8 @@ function updateHud() {
   $('#windFlag').style.transform = `scaleX(${S.wind.x * archers[viewer()].f >= 0 ? 1 : -1})`; // flag points away from you = blowing toward the enemy
   const mine = myTurn();
   show('#types', mine);
-  const cs = S.st && S.st.castle, pick = !!cs && mine && S.turn !== cs.def && S.phase === 'aim'; show('#squad', pick);
-  if (pick) $('#squad').innerHTML = cs.squad.hp.map((h, k) => { const v = k === cs.squad.act ? S.st.hp[S.turn] : h; return `<button data-k="${k}" class="${k === cs.squad.act ? 'on' : ''}" ${v > 0 ? '' : 'disabled'} aria-label="Attacker ${k + 1}">🏹${k + 1}<small>${Math.max(0, Math.round(v))}</small></button>`; }).join('');
+  const cs = S.st && S.st.castle, pick = !!cs && mine && S.phase === 'aim', dt = !!cs && S.turn === cs.def, att = cs ? 1 - cs.def : 0; show('#squad', pick); // v7.0.1: the defender picks a target too
+  if (pick) $('#squad').innerHTML = cs.squad.hp.map((h, k) => { const v = k === cs.squad.act ? S.st.hp[att] : h; return `<button data-k="${k}" class="${k === cs.squad.act ? 'on' : ''}" ${v > 0 ? '' : 'disabled'} aria-label="${dt ? 'Target' : 'Shoot with'} attacker ${k + 1}">${dt ? '🎯A' : '🏹'}${k + 1}<small>${Math.max(0, Math.round(v))}</small></button>`; }).join('');
   let specials = 0;
   document.querySelectorAll('#types button').forEach(b => {
     b.classList.toggle('on', b.dataset.t === S.types[S.turn]);
@@ -1568,7 +1585,7 @@ updateHud(); frame();
 
 // test hook (scripted checks)
 window.__game = {
-  castle: () => S.st && S.st.castle, legs: () => S.legs, pickSquad, setMatchChoice, presets: loadPresets, presetSave, presetLoad, openBuilder, size: () => sizeOf(), squadN: () => squadMeshes.length, bs: () => BS, cost: s => planCost(BS.plans[s]),
+  castle: () => S.st && S.st.castle, legs: () => S.legs, pickSquad, setMatchChoice, presets: loadPresets, presetSave, presetLoad, openBuilder, size: () => sizeOf(), squadN: () => squadMeshes.length, bs: () => BS, squadPos: () => squadMeshes.map(m => m.position.toArray()), cost: s => planCost(BS.plans[s]),
   S, archers, camera,
   // v5.4 hooks: last-shot guide + camera mode
   guide: () => {

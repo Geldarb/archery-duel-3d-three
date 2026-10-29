@@ -4,7 +4,7 @@ const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
 
-const BUILD = 'ad3t-v7.0';
+const BUILD = 'ad3t-v7.0.1';
 const app = express();
 app.get('/health', (req, res) => res.json({ ok: true, build: BUILD, rooms: rooms.size }));
 const fs = require('fs');
@@ -98,7 +98,7 @@ Promise.all([import('./public/sim.js'), import('./public/looks.js'), import('./p
       if (!r || !r.socks[1] || r.phase !== 'play' || r.winner >= 0 || r.turn !== i || Date.now() < r.busy) return; // only the active player, once the last shot has settled
       const a = { pitch: clamp(aim.pitch, 0, 1.3), power: clamp(aim.power, 0.1, 1) }; // any client yaw is dropped
       if (!sim.canFire(r.st, i, type)) type = 'normal';
-      const pick = r.st.castle && i !== r.st.castle.def && sim.pickAttacker(r.st, who) ? who : null; // v7.0: which of the 3 attackers shoots // specials only if earned (v6.2: or if you're named jesus)
+      const pick = r.st.castle && sim.pickAttacker(r.st, who) ? who : null; // v7.0: which of the 3 attackers shoots (v7.0.1: or which one the defender targets) // specials only if earned (v6.2: or if you're named jesus)
       const shot = sim.simulateShot(r.world, i, a, r.wind, type, r.st);
       const res = phys.resolvePhysics(r.st.phys, shot, r.st); // authoritative: blocks, falls, debris, blasts, spin, v6.1 fun specials
       const next = sim.finishShot(r.st, i, shot.type, shot, res, r.rand);

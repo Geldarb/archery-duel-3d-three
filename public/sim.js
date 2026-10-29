@@ -63,9 +63,11 @@ export function footTop(plan, gx, gz, z) { // next free level under a z x z foot
 }
 // v7.0 Defend the Castle: 1 defender (80-block castle, wider zone) vs a squad of 3 attackers (10-block cover); attackers win only by killing
 // the defender, the defender wins by surviving `turns` of their own shots or knocking out all 3. Then sides swap and the legs are compared.
-export const CASTLE_MAX = 80, COVER_MAX = 10, CASTLE_GRID = 5, CASTLE_TIME = 90, SQUAD = 3, CASTLE_TURNS = [10, 15], SQUAD_Z = [-5, 0, 5];
+export const CASTLE_MAX = 80, COVER_MAX = 10, CASTLE_GRID = 5, CASTLE_TIME = 90, SQUAD = 3, CASTLE_TURNS = [10, 15], SQUAD_Z = [-14, 0, 14];
+export const COVER_GX = 6, COVER_GZ = 8; // v7.0.1: attackers get a much bigger zone (9.6 m along the field x 12.8 m deep), archers spread ~5.6 m apart
 export const zoneOf = (s, mode) => { const c = !!mode && (mode.def === 0 || mode.def === 1), def = c && s === mode.def;
-  return { grid: def ? CASTLE_GRID : BUILD_GRID, agrid: def ? 2 * CASTLE_GRID : ARCHER_GRID, max: !c ? BUILD_MAX : def ? CASTLE_MAX : COVER_MAX, squad: c && !def, castle: def }; };
+  const sq = c && !def, grid = def ? CASTLE_GRID : sq ? COVER_GX : BUILD_GRID, gz = sq ? COVER_GZ : grid;
+  return { grid, gz, agrid: def ? 2 * CASTLE_GRID : sq ? 2 * COVER_GX : ARCHER_GRID, agz: def ? 2 * CASTLE_GRID : sq ? 2 * COVER_GZ : ARCHER_GRID, max: !c ? BUILD_MAX : def ? CASTLE_MAX : COVER_MAX, squad: c && !def, castle: def }; };
 // v6.1 special build pieces (count toward BUILD_MAX): banana peel (archers who end up on it after a hit/fall slip) and bouncy castle
 // (arrows bounce off it, anything landing on it gets bounced up). plan.kinds = optional per-block kind, validated with these limits.
 // v6.3: no per-type caps any more (every piece just counts toward BUILD_MAX); + heavy stone (6x mass), cloud (floats, pops when hit), trampoline
@@ -88,11 +90,12 @@ export function autoPlan(s, color = DEFAULT_BLOCK, mode = null) {
       }
       for (let gz = -2; gz <= 1; gz++) add(-5, gz, 0, 1, 'tramp');
     } else {
-      for (let gz = -3; gz <= 2; gz++) add(1, gz, 0);
-      for (const gz of [-3, -1, 0, 2]) add(1, gz, 1);
+      for (const c of SQUAD_Z.map(k => k / 2)) { add(1, c - 1, 0); add(1, c, 0); add(1, c - 1, 1); } // a short wall in front of each attacker
+      add(1, 0, 1);
     }
     const blocks = B.map(b => [s ? -b.gx - b.z : b.gx, b.gz, b.lv]);
-    return { blocks, sizes: B.map(b => b.z), kinds: B.map(b => b.kd), colors: B.map(() => (isBlockColor(color) ? color : DEFAULT_BLOCK)), archer: [0, 0] };
+    const squad = z0.squad ? SQUAD_Z.map(k => [0, k]) : undefined;
+    return { blocks, sizes: B.map(b => b.z), kinds: B.map(b => b.kd), colors: B.map(() => (isBlockColor(color) ? color : DEFAULT_BLOCK)), archer: [0, z0.squad ? SQUAD_Z[0] : 0], ...(squad ? { squad } : {}) };
   }
   const blocks = [], front = s ? -2 : 1;
   for (let y = 0; y < 6; y++) {
@@ -130,7 +133,7 @@ export function validateBuild(s, plan, mode = null) {
   const H = LAYOUT[BUILD_SLOT0[s]].half, boxes = [], out = [], cols = new Map();
   for (let n = 0; n < plan.blocks.length; n++) {
     const c = plan.blocks[n], z = zs ? zs[n] : 1;
-    if (!Array.isArray(c) || c.length < 2 || c.length > 3 || !isInt(c[0], -G, G - z) || !isInt(c[1], -G, G - z)) return fail('Outside your build zone', n);
+    if (!Array.isArray(c) || c.length < 2 || c.length > 3 || !isInt(c[0], -G, G - z) || !isInt(c[1], -Z.gz, Z.gz - z)) return fail('Outside your build zone', n);
     let lv = 0; for (let dx = 0; dx < z; dx++) for (let dz = 0; dz < z; dz++) lv = Math.max(lv, cols.get((c[0] + dx) + ',' + (c[1] + dz)) || 0);
     const want = c.length === 3 ? c[2] : lv;
     if (!Number.isInteger(want) || want < 0) return fail('Bad block', n);
@@ -142,9 +145,13 @@ export function validateBuild(s, plan, mode = null) {
     out.push(at); boxes.push(box(at, halfZ(H, z)));
   }
   const a = plan.archer || [0, 0];
-  if (!Array.isArray(a) || !isInt(a[0], -Z.agrid, Z.agrid) || !isInt(a[1], -Z.agrid, Z.agrid)) return fail('Archer must stay in your build zone');
-  const spot = az => { const ax = towerX(s) + a[0] * 0.4, sf = surface(boxes, ax, az, ARCHER_HALF[0], ARCHER_HALF[2]); return sf.on ? [rd(ax), rd(sf.top), rd(az)] : null; };
-  const squad = Z.squad ? SQUAD_Z.map(k => spot(k * 0.4)) : null; // v7.0 attackers: 3 archers in a line across the zone at the archer's x
+  const inA = q => Array.isArray(q) && isInt(q[0], -Z.agrid, Z.agrid) && isInt(q[1], -Z.agz, Z.agz);
+  if (!inA(a)) return fail('Archer must stay in your build zone');
+  const sp = Z.squad ? (plan.squad === undefined ? SQUAD_Z.map(k => [a[0], k]) : plan.squad) : null; // v7.0.1: each attacker placed on its own
+  if (sp && (!Array.isArray(sp) || sp.length !== SQUAD || !sp.every(inA))) return fail('Archers must stay in your build zone');
+  if (sp && sp.some((p, i) => sp.some((q, j) => j > i && Math.abs(p[0] - q[0]) < 2 && Math.abs(p[1] - q[1]) < 2))) return fail('Archers are too close together');
+  const spot = (az, gx = a[0]) => { const ax = towerX(s) + gx * 0.4, sf = surface(boxes, ax, az, ARCHER_HALF[0], ARCHER_HALF[2]); return sf.on ? [rd(ax), rd(sf.top), rd(az)] : null; };
+  const squad = sp ? sp.map(q => spot(q[1] * 0.4, q[0])) : null; // v7.0 attackers: 3 archers, each anywhere in the zone
   const ap = squad ? squad[0] : spot(a[1] * 0.4);
   if (!ap || (squad && squad.some(q => !q))) return { ...fail(squad ? 'Your 3 archers need solid ground (move them)' : 'Archer needs solid stone underfoot'), pos: out.at(-1) };
   return { ok: true, sizes: plan.blocks.map((_, n) => (zs ? zs[n] : 1)), squad, blocks: out, colors: plan.blocks.map((_, n) => (cl ? cl[n] : DEFAULT_BLOCK)), kinds: plan.blocks.map((_, n) => (kd ? kd[n] : 'block')), archer: ap };
@@ -258,6 +265,8 @@ function towerBoxes(b) { // loose AABB per side, for a cheap early-out
 function collide(world, p, shooter, st, t, tb, pickupTaken) {
   const a = st.phys.a;
   for (let i = 0; i < 2; i++) if (i !== shooter) { const part = archerHit(a[i], p, bigOf(st, i)); if (part) return { kind: part, who: i }; }
+  const c = st.castle; // v7.0.1: the defender can hit every living attacker, not just the active one
+  if (c && shooter === c.def) { const q = c.squad; for (let k = 0; k < q.pos.length; k++) if (k !== q.act && q.hp[k] > 0) { const part = archerHit(q.pos[k], p, 1); if (part) return { kind: part, who: 1 - c.def, sq: k }; } }
   if (st.pickup && !pickupTaken && Math.hypot(p.x - st.pickup.pos[0], p.y - st.pickup.pos[1], p.z - st.pickup.pos[2]) < PICKUP_R) return { kind: 'pickup', pickup: st.pickup.kind };
   for (let s = 0; s < 2; s++) { // own tower blocks are ignored right after release (you shoot over your own parapet)
     if (s === shooter && t < 0.35) continue;
@@ -390,13 +399,15 @@ export function finishShot(prev, shooter, type, shot, phys, rand) {
   const hp = [...prev.hp], ammo = prev.ammo.map(a => ({ ...a }));
   let pickup = prev.pickup, spawnIn = prev.spawnIn, got = null;
   if (ARROWS[type] && ARROWS[type].special) ammo[shooter][type] = Math.max(0, ammo[shooter][type] - 1);
+  const sqd = [0, 0, 0];
   for (const a of shot.arrows) {
-    if (a.res.who !== undefined) hp[a.res.who] = Math.max(0, hp[a.res.who] - a.res.dmg);
+    if (a.res.sq !== undefined) sqd[a.res.sq] += a.res.dmg; // v7.0.1: a waiting attacker was hit
+    else if (a.res.who !== undefined) hp[a.res.who] = Math.max(0, hp[a.res.who] - a.res.dmg);
     if (a.res.kind === 'pickup' && pickup && !got) { got = pickup.kind; ammo[shooter][got]++; pickup = null; spawnIn = spawnDelay(rand); }
   }
   for (const i of [0, 1]) hp[i] = Math.max(0, hp[i] - (phys.dmg[i] || 0));
   if (!pickup && !got && --spawnIn <= 0) { pickup = spawnPickup(rand); spawnIn = spawnDelay(rand); }
-  const castle = castleAfter(prev, shooter, hp, phys.phys);
+  const castle = castleAfter(prev, shooter, hp, phys.phys, sqd);
   return { hp, ammo, pickup, spawnIn, got, phys: phys.phys, fx: funEffects(prev, shooter, type, shot), big: prev.big || 0, swap: prev.swap || 0, jesus: prev.jesus || [0, 0], ...(castle ? { castle } : {}) };
 }
 // v6.1 status effects per player (st.fx[i]): splat (pigeon: no aim preview on their next turn), wrap (toilet roll: skip their next
@@ -441,11 +452,12 @@ export function pickAttacker(st, who) { // the attacker chooses which of their 3
   q.pos[q.act] = [...st.phys.a[a]]; q.hp[q.act] = st.hp[a]; q.act = who; st.phys.a[a] = [...q.pos[who]]; st.hp[a] = q.hp[who];
   return true;
 }
-function castleAfter(prev, shooter, hp, ph) { // count defender turns, sync the active attacker, bring on the next one after a knockout
+function castleAfter(prev, shooter, hp, ph, sqd = [0, 0, 0]) { // count defender turns, sync the active attacker, bring on the next one after a knockout
   const c0 = prev.castle; if (!c0) return null;
   const c = { ...c0, squad: { hp: [...c0.squad.hp], pos: c0.squad.pos.map(p => [...p]), act: c0.squad.act } }, a = 1 - c.def, q = c.squad;
   if (shooter === c.def) c.done++;
   q.hp[q.act] = hp[a]; q.pos[q.act] = [...ph.a[a]];
+  q.hp.forEach((h, k) => { if (k !== q.act) q.hp[k] = Math.max(0, h - (sqd[k] || 0)); });
   if (hp[a] <= 0 && hp[c.def] > 0) { const nx = q.hp.findIndex(h => h > 0); if (nx >= 0) { q.act = nx; ph.a[a] = [...q.pos[nx]]; hp[a] = q.hp[nx]; } }
   return c;
 }
