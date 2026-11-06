@@ -243,7 +243,7 @@ export function buildArena(scene, world, lights) {
     add(new THREE.ConeGeometry(t.r * 1.12, t.h * 0.58, 16), stripeM, t.x, t.y + t.h * 0.45 + t.h * 0.29, t.z);
     flag(group, t.x, t.y + t.h - 0.1, t.z, 0xe0342c); flags[flags.length - 1].cloth.scale.setScalar(0.5); flags[flags.length - 1].cloth.position.y = 0.9;
   }
-  const treb = makeTrebuchet(woodM, darkWood); treb.position.set(world.treb.x, world.treb.y, world.treb.z); treb.rotation.y = 0.3; group.add(treb);
+  if (world.treb) { const treb = makeTrebuchet(woodM, darkWood); treb.position.set(world.treb.x, world.treb.y, world.treb.z); treb.rotation.y = 0.3; group.add(treb); } // v7.0.2: mid-lane treb is culled
   const rockM = toon(0xa9adb8), rockGeo = new THREE.IcosahedronGeometry(1, 1);
   for (const k of world.rocks) add(rockGeo, rockM, k.x, k.y, k.z).scale.set(k.r * 1.2, k.r, k.r);
   // ---------- weather ----------

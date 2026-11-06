@@ -4,7 +4,7 @@ const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
 
-const BUILD = 'ad3t-v7.0.1';
+const BUILD = 'ad3t-v7.0.2';
 const app = express();
 app.get('/health', (req, res) => res.json({ ok: true, build: BUILD, rooms: rooms.size }));
 const fs = require('fs');

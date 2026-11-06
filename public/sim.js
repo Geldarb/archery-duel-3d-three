@@ -222,15 +222,18 @@ export function makeWorld(id) {
     h -= (h + 1.4) * (1 - smooth(d, 2, 3.4));            // river bed (always below the water)                   // river bed
     return h + Math.min(5, Math.max(0, Math.abs(z) - A.wallZ) * 0.22) + Math.min(4, Math.max(0, ax - 30) * 0.15); // gentle rims keep the sky open
   };
-  const tr = A.trees.map(([x, z, s]) => ({ x, z, s, y: groundH(x, z) }));
-  const tents = A.tents.map(([x, z, r, h]) => ({ x, z, r, h, y: groundH(x, z) }));
-  const rocks = A.rocks.map(([x, z, r]) => ({ x, z, r, y: groundH(x, z) }));
-  const treb = { x: A.treb[0], z: A.treb[1], y: groundH(A.treb[0], A.treb[1]) };
+  // v7.0.2: strip solid mid-lane scenery between the towers so arrows have a clear shot; keep props beside/behind each side (|x| >= MID)
+  const MID = DIST - 5; // ~10: open lane between duel/castle stand zones (innermost cover ~|x|=10.6)
+  const mid = x => Math.abs(x) < MID;
+  const tr = A.trees.map(([x, z, s]) => ({ x, z, s, y: groundH(x, z) })).filter(t => !mid(t.x));
+  const tents = A.tents.map(([x, z, r, h]) => ({ x, z, r, h, y: groundH(x, z) })).filter(t => !mid(t.x));
+  const rocks = A.rocks.map(([x, z, r]) => ({ x, z, r, y: groundH(x, z) })).filter(k => !mid(k.x));
+  const treb = mid(A.treb[0]) ? null : { x: A.treb[0], z: A.treb[1], y: groundH(A.treb[0], A.treb[1]) };
   const solid = p => {
     for (const t of tr) { const ly = p.y - t.y; if (ly > 0 && ((ly < 1.6 * t.s && Math.hypot(p.x - t.x, p.z - t.z) < 0.22 * t.s) || Math.hypot(p.x - t.x, ly - 2.5 * t.s, p.z - t.z) < 1.15 * t.s)) return true; }
     for (const t of tents) { const ly = p.y - t.y, r = Math.hypot(p.x - t.x, p.z - t.z); if (ly > 0 && ly < t.h && r < (ly < t.h * 0.45 ? t.r : t.r * (1 - (ly - t.h * 0.45) / (t.h * 0.55)))) return true; }
     for (const k of rocks) if (Math.hypot(p.x - k.x, p.y - k.y, p.z - k.z) < k.r) return true;
-    return Math.abs(p.x - treb.x) < 1.5 && Math.abs(p.z - treb.z) < 0.9 && p.y > treb.y && p.y < treb.y + 2.8;
+    return !!(treb && Math.abs(p.x - treb.x) < 1.5 && Math.abs(p.z - treb.z) < 0.9 && p.y > treb.y && p.y < treb.y + 2.8);
   };
   return { id: ARENAS[id] ? id : 'field', A, groundH, riverX, trees: tr, tents, rocks, treb, solid };
 }
